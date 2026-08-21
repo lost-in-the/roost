@@ -62,6 +62,36 @@ Initial contract. Topic `roost/agents/state`, retained, with a Last Will.
 - **`count` counts non-idle agents.** "3 agents, all idle" is not information a
   glanceable panel should shout about.
 
+## Instrument topic v1 — 2026-08-21
+
+Topic `roost/instrument/laptop-opens`, **retained**, **no heartbeat**, **no Last Will**.
+
+```json
+{ "v": 1, "count": 4, "last": "2026-08-21T23:15:17Z" }
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `v` | `1` | Versioned independently of the agent-state contract |
+| `count` | integer | Total recorded laptop-opens |
+| `last` | ISO 8601 or null | When the most recent one happened |
+
+### Why this is not part of the agent-state payload
+
+- **Different subject.** Agent state is about agents. A human-tapped counter is
+  a different kind of fact, and folding it in would mean every agent state
+  change republishes an unrelated number.
+- **Opposite failure semantics.** Agent state goes stale and must be disbelieved
+  after 30 seconds. The counter does not: it changes only when a human taps it,
+  so a retained value from last week is still exactly correct. One topic cannot
+  carry both rules honestly.
+- **Therefore no heartbeat and no Last Will here.** A dead daemon leaves the
+  last count retained, which remains true, because a tap cannot be recorded
+  while the daemon is down (the browser queues it and retries).
+
+Subscribers must not treat a message on this topic as evidence the state feed is
+alive. `renderer/topics.js` enforces that, with a test.
+
 ## How to change the schema
 
 1. Edit `schema/agent-state.vN.schema.json`.

@@ -58,6 +58,8 @@ html, body {
 
 .bar { display: flex; align-items: center; gap: 18px; }
 .bar.bottom { justify-content: space-between; align-items: center; gap: 24px; }
+/* Reserve room so the elapsed timer never runs under the corner instrument. */
+html[data-instrument="corner"] .bar.bottom { padding-right: 130px; }
 
 .state {
   margin: 0;
@@ -265,32 +267,83 @@ html[data-stale="yes"] #panel { animation: none !important; }
 
 /* ---- laptop button ------------------------------------------------------ */
 
-.laptop {
-  display: flex; flex: none;
-  /* Anchor right even when the elapsed timer is hidden (idle/offline). */
-  margin-left: auto; align-items: center; gap: 14px;
-  /* Comfortable touch target with cold fingers. */
-  min-height: 92px; padding: 14px 24px;
-  border: 2px solid #26313d;
-  border-radius: 18px;
-  background: #0d131a;
-  color: var(--ink-dim);
-  font: inherit; font-size: 19px; font-weight: 600; line-height: 1.18;
-  text-align: left;
-  cursor: none;
-  transition: transform 120ms ease, background 200ms ease, border-color 200ms ease;
+/* ---- laptop-open instrument -------------------------------------------- */
+/*
+ * Two spiked variants of the same component. It is tapped a handful of times a
+ * month, so at rest it must not compete with the state readout; the touch
+ * target stays large while the PAINT shrinks.
+ */
+
+.instrument-slot { display: contents; }
+#instrument-corner {
+  display: block;
+  position: absolute;
+  /* Inset so the glyph never touches the bezel; the button's own padding
+     supplies the rest of the touch target. */
+  right: 6px; bottom: 6px;
 }
-.laptop:active { transform: scale(0.96); background: #16202b; border-color: var(--accent); }
-.laptop-icon {
-  width: 34px; height: 24px; flex: none;
-  border: 3px solid currentColor; border-radius: 4px 4px 0 0; border-bottom-width: 5px;
+
+.laptop-counter {
+  display: flex; align-items: center;
+  border: 0; background: none; color: var(--ink-dim);
+  font: inherit; cursor: none;
+  position: relative;
+  transition: opacity 320ms ease, color 320ms ease, transform 120ms ease;
 }
-.laptop-count {
-  font-family: var(--mono); font-size: 34px; font-weight: 800;
-  color: var(--ink); font-variant-numeric: tabular-nums;
+
+.lc-icon {
+  flex: none;
+  border: 2.5px solid currentColor;
+  border-radius: 4px 4px 0 0;
+  border-bottom-width: 4px;
 }
-.laptop.saved { border-color: #3ddc97; }
-.laptop.failed { border-color: #ffa62b; }
+.lc-count {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+/* Only appears while something is queued or has just happened. */
+.lc-hint {
+  position: absolute; right: 0; bottom: 100%;
+  margin-bottom: 6px;
+  white-space: nowrap;
+  font-size: 16px; color: var(--ink-dim);
+  opacity: 0; transition: opacity 220ms ease;
+}
+.laptop-counter.lc-has-hint .lc-hint { opacity: 0.85; }
+
+.laptop-counter[data-status="saved"]  { color: #3ddc97; }
+.laptop-counter[data-status="failed"] { color: #ffa62b; }
+.laptop-counter:active { transform: scale(0.94); opacity: 1; }
+
+/* -- variant: recessive corner glyph -- */
+/* Reads as furniture. The generous padding is the touch target; the visible
+   mark is deliberately tiny. */
+.lc-corner {
+  gap: 12px;
+  padding: 26px 28px;
+  min-width: 96px; min-height: 88px;
+  justify-content: flex-end;
+  opacity: 0.20;
+}
+.lc-corner .lc-icon  { width: 26px; height: 18px; }
+.lc-corner .lc-count { font-size: 27px; }
+.lc-corner:active, .lc-corner.lc-has-hint { opacity: 1; }
+
+/* -- variant: header chip -- */
+/* Out of the content area entirely; the body belongs to state. */
+.lc-header {
+  gap: 9px;
+  padding: 0 14px;
+  align-self: stretch;
+  min-height: 76px;
+  opacity: 0.5;
+}
+.lc-header .lc-icon  { width: 22px; height: 15px; }
+.lc-header .lc-count { font-size: 24px; font-weight: 600; }
+.lc-header:active { opacity: 1; }
+.lc-header .lc-hint { right: auto; left: 0; top: 100%; bottom: auto; margin: 6px 0 0; }
 
 .toast {
   position: absolute; left: 50%; bottom: 26px;

@@ -23,6 +23,10 @@ export function loadConfig(env = process.env) {
 
   const port = int(env.ROOST_MQTT_PORT, 1883);
   const topic = env.ROOST_MQTT_TOPIC || 'roost/agents/state';
+  // The laptop-open counter rides its own topic. It is a different kind of fact
+  // from agent state, with no heartbeat and no staleness rule. See
+  // daemon/instrument.js for why they are kept apart.
+  const instrumentTopic = env.ROOST_MQTT_INSTRUMENT_TOPIC || 'roost/instrument/laptop-opens';
   const heartbeatMs = int(env.ROOST_HEARTBEAT_MS, 10_000);
   const staleMs = int(env.ROOST_STALE_MS, 30_000);
 
@@ -46,6 +50,7 @@ export function loadConfig(env = process.env) {
       host,
       port,
       topic,
+      instrumentTopic,
       username: env.ROOST_MQTT_USER || undefined,
       password: env.ROOST_MQTT_PASSWORD || undefined,
     },
@@ -59,7 +64,12 @@ export function loadConfig(env = process.env) {
       // WebSocket. EMQX exposes this on 8083 by default.
       wsUrl: env.ROOST_MQTT_WS_URL || `ws://${host}:8083/mqtt`,
       topic,
+      instrumentTopic,
       staleMs,
+      // Which spiked layout the panel mounts. `corner` or `header`.
+      // A ?instrument= query parameter on the page overrides this, so both can
+      // be compared without restarting the daemon.
+      instrumentVariant: env.ROOST_INSTRUMENT_VARIANT || 'corner',
       // Prefer a separate subscribe-only credential: this one is handed to a
       // browser page, so it should not be able to publish to the topic.
       username: env.ROOST_MQTT_RENDERER_USER || env.ROOST_MQTT_USER || undefined,

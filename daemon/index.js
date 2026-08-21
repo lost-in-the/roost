@@ -4,6 +4,7 @@ import { aggregate } from './aggregate.js';
 import { StatePublisher } from './publisher.js';
 import { startHttpServer } from './http.js';
 import { LaptopLog } from './laptop-log.js';
+import { instrumentPayload } from './instrument.js';
 import { MockStateSource, SCRIPTS } from './sources/mock.js';
 import { OpenClawStateSource } from './sources/openclaw.js';
 
@@ -52,12 +53,24 @@ async function main() {
   const laptopLog = new LaptopLog({ path: config.laptopLogPath });
   log(`laptop-open log: ${laptopLog.path} (${laptopLog.count()} recorded)`);
 
+  const publishInstrument = () => {
+    const payload = instrumentPayload(laptopLog);
+    if (publisher.publishRetained(config.mqtt.instrumentTopic, payload)) {
+      log(`instrument: count=${payload.count} -> ${config.mqtt.instrumentTopic}`);
+    }
+  };
+
+  // Republish the retained counter on every (re)connect, so a broker that was
+  // restarted (and lost its retained set) gets the current value back.
+  publisher.onConnected = publishInstrument;
+
   const http = await startHttpServer({
     host: config.http.host,
     port: config.http.port,
     laptopLog,
     rendererConfig: config.renderer,
     onLog: log,
+    onRecorded: publishInstrument,
   });
   log(`renderer served at http://${config.http.host}:${http.port}/`);
 

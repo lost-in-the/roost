@@ -1,5 +1,7 @@
 import mqtt from '/vendor/mqtt.esm.js';
 import { isStale, silentFor } from '/staleness.js';
+import { routeTopic, countsAsLiveness } from '/topics.js';
+import { mount as mountCounter, flushQueue, resolveVariant } from '/components/laptop-counter.js';
 
 /**
  * The panel.
@@ -23,8 +25,6 @@ const nodes = {
   count: el('count'),
   elapsed: el('elapsed'),
   clock: el('clock'),
-  laptop: el('laptop'),
-  laptopCount: el('laptop-count'),
   toast: el('toast'),
   staleSub: el('stale-sub'),
 };
@@ -118,15 +118,12 @@ function tickStaleness() {
 // ---------------------------------------------------------------------------
 // laptop-open counter
 // ---------------------------------------------------------------------------
+//
+// The control itself lives in components/laptop-counter.js so other surfaces
+// can mount the same thing. Here we only wire it to this page's transports:
+// the count arrives over MQTT, a tap goes out over loopback HTTP.
 
-const PENDING_KEY = 'roost.pendingLaptopOpens';
-
-const readPending = () => {
-  try { return JSON.parse(localStorage.getItem(PENDING_KEY) || '[]'); } catch { return []; }
-};
-const writePending = (list) => {
-  try { localStorage.setItem(PENDING_KEY, JSON.stringify(list)); } catch { /* full or blocked */ }
-};
+let counter = null;
 
 function toast(message) {
   nodes.toast.textContent = message;
@@ -134,52 +131,31 @@ function toast(message) {
   setTimeout(() => nodes.toast.classList.remove('show'), 1900);
 }
 
-async function postLaptopOpen() {
+/** Persist one tap. Resolves with the authoritative count from the daemon. */
+async function recordLaptopOpen() {
   const res = await fetch('/api/laptop-open', { method: 'POST' });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return (await res.json()).count;
 }
 
-/** Retry anything recorded while the daemon was down. Taps must not be lost. */
-async function flushPending() {
-  const pending = readPending();
-  if (pending.length === 0) return;
-  const remaining = [...pending];
-  while (remaining.length) {
-    try { await postLaptopOpen(); remaining.shift(); }
-    catch { break; }
-  }
-  writePending(remaining);
-  if (remaining.length < pending.length) refreshLaptopCount();
+function mountInstrument(variant) {
+  const slot = el(variant === 'header' ? 'instrument-header' : 'instrument-corner');
+  counter = mountCounter(slot, {
+    variant,
+    onRecord: async () => {
+      const count = await recordLaptopOpen();
+      toast('logged');
+      return count;
+    },
+  });
+  document.documentElement.dataset.instrument = variant;
 }
 
-async function refreshLaptopCount() {
-  try {
-    const { count } = await (await fetch('/api/laptop-open')).json();
-    nodes.laptopCount.textContent = String(count + readPending().length);
-  } catch {
-    nodes.laptopCount.textContent = String(readPending().length || '—');
-  }
+async function drainQueue() {
+  const { flushed } = await flushQueue(recordLaptopOpen);
+  if (flushed > 0) toast(`synced ${flushed} queued`);
+  counter?.refreshPending();
 }
-
-nodes.laptop.addEventListener('click', async () => {
-  nodes.laptop.classList.remove('saved', 'failed');
-  // Optimistic: the tap is acknowledged instantly, then reconciled.
-  const optimistic = Number.parseInt(nodes.laptopCount.textContent, 10);
-  if (Number.isFinite(optimistic)) nodes.laptopCount.textContent = String(optimistic + 1);
-  try {
-    const count = await postLaptopOpen();
-    nodes.laptopCount.textContent = String(count + readPending().length);
-    nodes.laptop.classList.add('saved');
-    toast('logged');
-  } catch {
-    // Queue locally so a dead daemon does not cost us a data point.
-    writePending([...readPending(), new Date().toISOString()]);
-    nodes.laptop.classList.add('failed');
-    toast('logged locally, will sync');
-  }
-  setTimeout(() => nodes.laptop.classList.remove('saved', 'failed'), 1600);
-});
 
 // ---------------------------------------------------------------------------
 // startup
@@ -187,6 +163,12 @@ nodes.laptop.addEventListener('click', async () => {
 
 async function connect() {
   config = await (await fetch('/api/config')).json();
+
+  // ?instrument=corner|header overrides the daemon's default, so both spiked
+  // layouts can be compared on the real panel without restarting anything.
+  const requested = new URLSearchParams(location.search).get('instrument');
+  mountInstrument(resolveVariant(requested || config.instrumentVariant));
+  drainQueue();
 
   const client = mqtt.connect(config.wsUrl, {
     username: config.username || undefined,
@@ -200,17 +182,32 @@ async function connect() {
   client.on('connect', () => {
     root.dataset.link = 'up';
     client.subscribe(config.topic, { qos: 1 });
+    // Retained, so the current count arrives immediately on subscribe.
+    if (config.instrumentTopic) client.subscribe(config.instrumentTopic, { qos: 1 });
   });
   client.on('close', () => { root.dataset.link = 'down'; });
   client.on('error', () => { root.dataset.link = 'down'; });
 
-  client.on('message', (_topic, raw) => {
+  client.on('message', (topic, raw) => {
     let payload;
     try { payload = JSON.parse(raw.toString()); }
     catch { return; }                       // a malformed message is not state
 
-    lastMessageAt = Date.now();
-    root.dataset.stale = 'no';
+    const route = routeTopic(topic, {
+      stateTopic: config.topic,
+      instrumentTopic: config.instrumentTopic,
+    });
+
+    if (route === 'instrument') {
+      counter?.setCount(payload.count);
+      return;                               // deliberately NOT liveness
+    }
+    if (route !== 'state') return;
+
+    if (countsAsLiveness(route)) {
+      lastMessageAt = Date.now();
+      root.dataset.stale = 'no';
+    }
 
     // Last Will arrives with state "offline" and deliberately NO `ts`, because
     // a timestamp frozen at connect time would be arbitrarily stale. Treat it
@@ -226,14 +223,15 @@ async function connect() {
 setInterval(tickElapsed, 1000);
 setInterval(tickClock, 10_000);
 setInterval(tickStaleness, 1000);
-setInterval(flushPending, 15_000);
+setInterval(drainQueue, 15_000);
 
 tickClock();
-refreshLaptopCount();
-flushPending();
 connect().catch((err) => {
   root.dataset.state = 'offline';
   root.dataset.link = 'down';
   nodes.state.textContent = 'offline';
   nodes.label.textContent = `cannot reach the roost daemon (${err.message})`;
+  // The daemon is unreachable, so mount the default variant anyway: the queue
+  // still works and the taps are what matter most when things are broken.
+  if (!counter) mountInstrument('corner');
 });

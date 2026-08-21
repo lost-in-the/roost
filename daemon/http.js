@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { join, normalize, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { instrumentPayload } from './instrument.js';
 
 /**
  * A small loopback HTTP server with two jobs:
@@ -28,7 +29,7 @@ const json = (res, status, body) => {
   res.end(payload);
 };
 
-export async function startHttpServer({ host, port, laptopLog, rendererConfig, onLog = () => {} }) {
+export async function startHttpServer({ host, port, laptopLog, rendererConfig, onLog = () => {}, onRecorded = () => {} }) {
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, `http://${host}`);
     const path = url.pathname;
@@ -41,6 +42,9 @@ export async function startHttpServer({ host, port, laptopLog, rendererConfig, o
       if (req.method === 'POST') {
         const count = laptopLog.record(Date.now());
         onLog(`laptop-open recorded (total ${count})`);
+        // Republish the retained counter so every screen updates, not just the
+        // one that was tapped.
+        onRecorded(instrumentPayload(laptopLog));
         return json(res, 200, { count, recordedAt: new Date().toISOString() });
       }
       if (req.method === 'GET') {

@@ -23,6 +23,7 @@
     <h1 class="state" id="state-name">connecting</h1>
     <span class="count" id="count" hidden></span>
     <span class="clock" id="clock"></span>
+    <span class="instrument-slot" id="instrument-header"></span>
     <span class="link" id="link" title="broker connection"></span>
   </header>
 
@@ -37,14 +38,11 @@
 
   <footer class="bar bottom">
     <span class="elapsed" id="elapsed"></span>
-
-    <!-- The measurement instrument for the project's success metric. -->
-    <button id="laptop" class="laptop" type="button">
-      <span class="laptop-icon" aria-hidden="true"></span>
-      <span class="laptop-text">had to open<br>the laptop</span>
-      <span class="laptop-count" id="laptop-count">—</span>
-    </button>
   </footer>
+
+  <!-- The measurement instrument mounts into whichever slot its variant names.
+       See renderer/components/laptop-counter.js. -->
+  <div class="instrument-slot" id="instrument-corner"></div>
 
   <!-- Shown when heartbeats stop. Deliberately covers the stale reading:
        a panel you half-believe is worse than one that plainly says it is blind. -->

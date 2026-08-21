@@ -56,6 +56,9 @@ export class StatePublisher {
     this.publishCount = 0;
     this.reconnectAttempts = 0;
     this.onLog = () => {};
+    // Called after every (re)connect, so retained side-channels can be
+    // republished once the broker is actually reachable.
+    this.onConnected = () => {};
   }
 
   start() {
@@ -76,6 +79,7 @@ export class StatePublisher {
       if (this.reconnectPeriodMs == null) this.client.options.reconnectPeriod = BACKOFF_BASE_MS;
       this.onLog('connected to broker');
       this.publishNow();
+      this.onConnected();
     });
 
     this.client.on('reconnect', () => {
@@ -105,6 +109,19 @@ export class StatePublisher {
     const payload = this.buildPayload();
     this.client.publish(this.topic, JSON.stringify(payload), { qos: 1, retain: true });
     this.publishCount += 1;
+  }
+
+  /**
+   * Publish a retained payload to any topic on the daemon's existing
+   * connection. Used for the laptop-open instrument, which shares this client
+   * rather than opening a second one for a single number.
+   *
+   * @returns {boolean} whether it actually went out
+   */
+  publishRetained(topic, payload) {
+    if (!this.connected || !this.client) return false;
+    this.client.publish(topic, JSON.stringify(payload), { qos: 1, retain: true });
+    return true;
   }
 
   /** Drop the socket with no DISCONNECT, so the broker fires our will. */
