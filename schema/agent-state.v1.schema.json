@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/lost-in-the/roost/schema/agent-state.v1.schema.json",
+  "title": "roost agent state (v1)",
+  "description": "The single reconciled state of every agent, published retained to the state topic. Produced only by the roost daemon; every renderer is a subscriber and never aggregates.",
+  "type": "object",
+  "required": ["v", "state", "count", "label", "urgency", "primary_run_id"],
+
+  "comment-on-additional-properties": "additionalProperties is deliberately true. Renderers MUST tolerate unknown fields so the daemon can add them without a coordinated release.",
+  "additionalProperties": true,
+
+  "properties": {
+    "v": {
+      "const": 1,
+      "description": "Schema version. Renderers should refuse to interpret a payload whose major version they do not know."
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Publication time, second resolution, UTC. ABSENT on the Last Will payload: the will is fixed at connect time, so any timestamp in it would be arbitrarily stale by the time the broker sent it. A payload with state 'offline' and no 'ts' means 'offline as of now'."
+    },
+    "state": {
+      "enum": ["idle", "thinking", "listening", "needs_attention", "stalled", "offline"],
+      "description": "Displayed state. Aggregated by precedence: needs_attention > stalled > thinking > listening > idle. 'offline' is never produced by aggregation; only the broker publishes it, via Last Will."
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of NON-IDLE agents. Not the total number of agents."
+    },
+    "label": {
+      "type": ["string", "null"],
+      "maxLength": 64,
+      "description": "Short human-readable line, from the agent that determined the displayed state. Truncated to 64 characters IN THE DAEMON, at this schema boundary; a truncated value ends with U+2026. A renderer may ellipsize further to fit its glass but must never receive a longer string."
+    },
+    "urgency": {
+      "enum": ["ambient", "notify", "blocking"],
+      "description": "Maximum urgency across all NON-IDLE agents. Computed independently of which agent won the state race, so a quietly-thinking agent that is blocking still raises this."
+    },
+    "primary_run_id": {
+      "type": ["string", "null"],
+      "description": "Run id of the agent that determined the displayed state. Renamed from 'run_id' before v1 shipped: the old name implied a single run in a payload that aggregates many."
+    },
+    "since": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "When the winning agent entered its current state. Additive to v1. Elapsed time is derived from this, NOT from 'ts', which is publication time and would reset on every heartbeat. Null when nothing is running. Renderers predating this field ignore it and fall back to their own first-seen time."
+    }
+  },
+
+  "examples": [
+    {
+      "v": 1,
+      "ts": "2026-08-21T17:46:43Z",
+      "state": "thinking",
+      "count": 2,
+      "label": "Deploying photopush to k3s",
+      "urgency": "ambient",
+      "primary_run_id": "abc123",
+      "since": "2026-08-21T17:45:56Z"
+    },
+    {
+      "v": 1,
+      "state": "offline",
+      "count": 0,
+      "label": null,
+      "urgency": "ambient",
+      "primary_run_id": null
+    }
+  ]
+}

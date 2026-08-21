@@ -1,0 +1,32 @@
+[Unit]
+Description=roost panel renderer (fullscreen browser on the panel output)
+Documentation=https://github.com/lost-in-the/roost
+
+# Needs the daemon's loopback HTTP server to fetch the page, and a live
+# Hyprland session to place the window. It tolerates a slow daemon:
+# launch-panel.sh waits for the HTTP server before starting the browser.
+After=roost-daemon.service graphical-session.target
+Wants=roost-daemon.service
+PartOf=graphical-session.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=%h/Work/lost-in-the/roost
+
+# The script launches the browser detached and then places the window, so it
+# exits once placement is confirmed. RemainAfterExit keeps the unit "active"
+# so `systemctl --user restart roost-panel` re-places an existing panel.
+ExecStart=%h/Work/lost-in-the/roost/scripts/launch-panel.sh
+
+# Kill switch: `systemctl --user stop roost-panel` leaves the browser running;
+# this stops it too, so the unit is a real off switch.
+ExecStop=/usr/bin/pkill -f "user-data-dir=%S/roost/browser"
+
+Restart=no
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=roost-panel
+
+[Install]
+WantedBy=graphical-session.target

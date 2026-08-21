@@ -1,0 +1,237 @@
+# roost
+
+A small touchscreen on the desk showing what the OpenClaw agents are doing, so
+you stop opening a laptop just to check on them.
+
+One daemon aggregates every agent into a single state and publishes it to MQTT.
+Every screen is a thin subscriber of that one message. **The contract is the
+asset; renderers are disposable.**
+
+```
+  StateSource  (mock today, OpenClaw later)
+       │
+       ▼
+  roost daemon ─── aggregates across all agents, truncates the label,
+       │           heartbeats every 10s, registers a Last Will
+       ▼
+   MQTT (EMQX)     topic: roost/agents/state   [retained] + LWT
+       │
+       ├── panel renderer   fullscreen browser on a pinned Hyprland output
+       ├── Stream Deck      (existing, untouched)
+       └── Home Assistant   (later)
+```
+
+**Milestone 1.** Panel shows live agent state, driven by a mock source. Touch
+approvals, Home Assistant views, audio, the enclosure and the animated face are
+all out of scope.
+
+---
+
+## Status
+
+| | |
+|---|---|
+| State contract, daemon, renderer | working, 79 tests |
+| Hyprland output pinning | working, verified against a headless 1024×600 stand-in |
+| **Physical panel** | **not yet connected** — see [Connecting the real panel](#connecting-the-real-panel) |
+| **OpenClaw integration** | **stubbed** — see [`docs/DECISIONS.md`](docs/DECISIONS.md) D-001 |
+
+The panel is driven by `MockStateSource`, which loops through every state on a
+timer. That is a deliberate M1 outcome, not a shortfall: everything downstream
+of the `StateSource` interface is built and verified, so the real adapter is a
+swap behind it.
+
+---
+
+## Try it in three terminals
+
+No broker, no panel hardware, and no OpenClaw needed.
+
+```sh
+npm install
+
+npm run dev:broker                        # 1. local MQTT broker (aedes)
+ROOST_MQTT_HOST=127.0.0.1 npm run dev     # 2. the daemon, mock source
+./scripts/launch-panel.sh                 # 3. the panel
+```
+
+The panel opens fullscreen on the `roost` Hyprland workspace. Without the real
+panel connected, create a stand-in output first:
+
+```sh
+hyprctl output create headless
+hyprctl monitors -j | jq -r '.[] | .name'    # note the new HEADLESS-N
+```
+
+then point `~/.config/hypr/roost-monitor.lua` at it — see
+[`config/README.md`](config/README.md#testing-without-the-panel-hardware).
+
+Watch the contract directly:
+
+```sh
+node -e "const m=require('mqtt').connect('mqtt://127.0.0.1:1883');
+m.on('connect',()=>m.subscribe('roost/agents/state'));
+m.on('message',(t,p)=>console.log(p.toString()))"
+```
+
+---
+
+## Install
+
+```sh
+./scripts/install.sh            # --dry-run to see what it would touch
+```
+
+It checks dependencies, installs npm packages, symlinks the Hyprland config and
+systemd units, and creates `.env` from the example. Then:
+
+```sh
+$EDITOR .env                                     # broker host + op:// references
+systemctl --user enable --now roost-daemon roost-panel
+```
+
+**Kill switch**, leaving the Stream Deck and everything else alone:
+
+```sh
+systemctl --user stop roost-panel roost-daemon
+```
+
+### Secrets
+
+The daemon reads plain environment variables and knows nothing about 1Password.
+The systemd unit runs it under `op run --env-file`, so `.env` holds `op://`
+**references** and never a credential. `.env` is gitignored;
+[`.env.example`](.env.example) lists every variable.
+
+Check a reference resolves without printing its value:
+
+```sh
+op read "op://Homelab/EMQX roost daemon/password" >/dev/null && echo ok
+```
+
+---
+
+## Connecting the real panel
+
+The panel is pinned by **monitor description**, never by connector name, because
+connector names (`HDMI-A-1`, `DP-2`) reorder on hotplug and would silently move
+it.
+
+```sh
+./scripts/derive-monitor.sh                  # writes config/hypr/roost-monitor.lua
+cp config/hypr/roost-monitor.lua ~/.config/hypr/
+hyprctl reload && hyprctl configerrors       # must print nothing
+```
+
+To re-derive it by hand, here or on other hardware:
+
+```sh
+hyprctl monitors -j | jq -r '.[] | "\(.name)  \(.width)x\(.height)  \(.description)"'
+```
+
+If the panel is plugged in but does not appear, check the connector is live:
+
+```sh
+for c in /sys/class/drm/card*-*/status; do echo "$(basename $(dirname $c)) $(cat $c)"; done
+```
+
+> **Do not use DisplayLink or any USB display adapter.** It is broken on
+> Hyprland, and this GPU has no USB-C, so DP Alt Mode is impossible. Video comes
+> off the GPU over HDMI or DisplayPort.
+
+`config/README.md` documents the Hyprland behaviours that differ from the wiki
+on 0.56.2 — there are six, and two of them required real workarounds.
+
+---
+
+## Changing the schema
+
+The state contract is the one thing that is expensive to get wrong: every screen
+subscribes to it.
+
+1. Edit `schema/agent-state.vN.schema.json`.
+2. Add an entry to [`schema/CHANGELOG.md`](schema/CHANGELOG.md) saying **what
+   changed and why**.
+3. Update `daemon/aggregate.js` and `test/aggregate.test.js`. Aggregation is the
+   only producer, so the schema boundary is that one file.
+4. Update `renderer/app.js` if the field is displayed — it must keep working
+   against a daemon that does not send it yet.
+5. `npm test`.
+
+**Adding an optional field is free**: keep `v` the same, because renderers are
+required to tolerate unknown fields. **Removing, renaming, or retyping a field
+is breaking**: bump `v`, add a new schema file, and publish both until every
+subscriber is updated. Adding a value to `state` or `urgency` is breaking in
+practice even though it looks additive, because subscribers switch on the value.
+
+### The rules that carry weight
+
+1. **The daemon aggregates; the renderer never does.** Two surfaces that can
+   disagree make both untrustworthy.
+2. **`stalled` must not look like `thinking`.** Turns legitimately run tens of
+   seconds. If working and stuck look alike, the project fails its purpose.
+3. **A frozen panel is worse than an error panel.** Last Will and the 30-second
+   staleness rule are both required; they cover different failures.
+4. **`label` is truncated in the daemon**, at the schema boundary — never in the
+   renderer.
+
+---
+
+## Layout
+
+```
+daemon/
+  index.js          wiring
+  aggregate.js      many agents in, one reconciled state out (pure)
+  publisher.js      MQTT: retained, Last Will, heartbeat, backoff
+  http.js           serves the renderer, accepts laptop-open taps
+  laptop-log.js     the durable counter
+  config.js         environment parsing
+  sources/
+    state-source.js the interface everything else is built against
+    mock.js         scripted timelines
+    openclaw.js     STUB — see docs/DECISIONS.md D-001
+renderer/           plain HTML/CSS/JS, no framework, no build step
+schema/             the state contract, versioned, with a changelog
+config/hypr/        Hyprland output + workspace pinning
+config/systemd/     user units
+scripts/            install, derive-monitor, launch-panel, dev-broker
+docs/               decisions and the original plans
+```
+
+`npm test` runs 79 tests with Node's built-in runner. Aggregation and the log are
+tested as pure units; the publisher is tested against a **real** in-process
+broker, including cutting sockets to prove the Last Will fires and reconnection
+continues.
+
+---
+
+## The "had to open the laptop" button
+
+The success metric is *zero laptop-opens motivated solely by checking on an
+agent, across 30 days*. The button in the bottom-right corner is the instrument.
+
+One tap appends a timestamped line to `~/.local/state/roost/laptop-opens.log` and
+increments the count. The write is `fsync`ed before the tap is acknowledged, and
+the count is always read back from the file, so it survives a crash or a reboot.
+If the daemon is down the tap is queued in the browser and retried, because an
+instrument that silently loses data points measures nothing.
+
+```sh
+wc -l < ~/.local/state/roost/laptop-opens.log     # the count
+cat    ~/.local/state/roost/laptop-opens.log      # when
+```
+
+---
+
+## Reading order
+
+- [`docs/DECISIONS.md`](docs/DECISIONS.md) — what was chosen, why, and what would
+  change if a choice is wrong
+- [`config/README.md`](config/README.md) — Hyprland version drift and how each
+  pinning requirement was verified
+- [`schema/CHANGELOG.md`](schema/CHANGELOG.md) — the contract's history
+- [`docs/desk-agent-presence-plan.md`](docs/desk-agent-presence-plan.md) — why
+  this exists at all; start at the TL;DR, then §5, then §3
+- [`docs/slice1-delivery-plan.md`](docs/slice1-delivery-plan.md) — flows and
+  edge-case decisions

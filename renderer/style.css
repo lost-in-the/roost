@@ -1,0 +1,323 @@
+/* roost panel — 1024x600, viewed from about a metre away.
+ *
+ * The load-bearing rule: `thinking` and `stalled` must be told apart at a
+ * glance without reading. They are separated on four independent channels:
+ *
+ *   channel   thinking              stalled
+ *   motion    strip sweeps, always  strip FROZEN, slow whole-panel pulse
+ *   colour    cool cyan             warm amber
+ *   texture   flat fill             diagonal hazard stripes
+ *   glyph     rotating arc          exclamation in a triangle
+ *
+ * Colour alone would fail in peripheral vision and for colour-blind viewing,
+ * so motion is the primary carrier and colour is the confirmation.
+ */
+
+:root {
+  --ink:        #f2f5f7;
+  --ink-dim:    #8e9aa6;
+  --bg:         #06080b;
+  --accent:     #4b5563;
+  --accent-2:   #2b3440;
+  --pulse:      0;              /* per-state alpha for the ambient wash */
+  --panel-pad:  34px;
+
+  --font: ui-sans-serif, "Inter", "Helvetica Neue", system-ui, sans-serif;
+  --mono: ui-monospace, "JetBrains Mono", "SF Mono", monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0;
+  height: 100%; width: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font);
+  /* A desk panel is touched, not selected. */
+  user-select: none; -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: none;
+}
+
+#panel {
+  position: relative;
+  height: 100vh; width: 100vw;
+  padding: var(--panel-pad);
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+  gap: 14px;
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgb(from var(--accent) r g b / var(--pulse)) 0%, transparent 70%),
+    var(--bg);
+  transition: background 600ms ease;
+}
+
+/* ---- header ------------------------------------------------------------ */
+
+.bar { display: flex; align-items: center; gap: 18px; }
+.bar.bottom { justify-content: space-between; align-items: center; gap: 24px; }
+
+.state {
+  margin: 0;
+  font-size: clamp(46px, 8.2vw, 84px);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 0.95;
+  text-transform: lowercase;
+  color: var(--accent);
+  transition: color 400ms ease;
+}
+
+.count {
+  font-family: var(--mono);
+  font-size: 30px; font-weight: 700;
+  padding: 6px 16px;
+  border-radius: 999px;
+  color: var(--bg);
+  background: var(--accent);
+}
+.count[hidden] { display: none; }
+
+/* Clock sits in the header, pushed right, ahead of the link dot. */
+.clock {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 27px; font-weight: 600;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Broker link indicator. Small on purpose: it is diagnostic, not the message. */
+.link {
+  width: 15px; height: 15px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.35;
+  flex: none;
+}
+html[data-link="up"]   .link { opacity: 1; }
+html[data-link="down"] .link { background: #ff4d5e; opacity: 1; animation: blink 1s steps(2, start) infinite; }
+
+/* ---- glyph ------------------------------------------------------------- */
+
+.glyph { width: 76px; height: 76px; flex: none; position: relative; color: var(--accent); }
+
+.glyph::before {
+  content: ""; position: absolute; inset: 0;
+  border-radius: 50%;
+  border: 8px solid currentColor;
+  opacity: 0.22;
+}
+.glyph::after { content: ""; position: absolute; inset: 0; }
+
+/* thinking: an arc that never stops turning */
+html[data-state="thinking"] .glyph::after {
+  border-radius: 50%;
+  border: 8px solid transparent;
+  border-top-color: currentColor;
+  border-right-color: currentColor;
+  animation: spin 1.15s linear infinite;
+}
+
+/* stalled: a hard triangle. No rotation at all. */
+html[data-state="stalled"] .glyph::before { opacity: 0; }
+html[data-state="stalled"] .glyph::after {
+  inset: 4px;
+  background: currentColor;
+  clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+  animation: hard-pulse 1.6s steps(1, end) infinite;
+}
+
+/* needs_attention: a filled dot that pulses hard. The one loud state. */
+html[data-state="needs_attention"] .glyph::after {
+  inset: 15px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: throb 900ms ease-in-out infinite;
+}
+
+/* listening: concentric ripple */
+html[data-state="listening"] .glyph::after {
+  border-radius: 50%;
+  border: 8px solid currentColor;
+  animation: ripple 2s ease-out infinite;
+}
+
+/* idle: a small still dot. Nothing moves. */
+html[data-state="idle"] .glyph::after {
+  inset: 27px; border-radius: 50%;
+  background: currentColor; opacity: 0.55;
+}
+
+/* offline / stale: a slashed circle */
+html[data-state="offline"] .glyph::after,
+html[data-stale="yes"] .glyph::after {
+  top: 50%; left: -4px; right: -4px; height: 8px;
+  background: currentColor;
+  transform: rotate(-45deg);
+  animation: none;
+}
+
+/* ---- label ------------------------------------------------------------- */
+
+.label {
+  margin: 0;
+  align-self: center;
+  font-size: clamp(28px, 4.4vw, 46px);
+  font-weight: 500;
+  line-height: 1.22;
+  color: var(--ink);
+  /* The daemon caps this at 64 characters; the panel only ellipsizes to fit. */
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+  max-width: 74%;
+}
+.label:empty { display: none; }
+
+/* ---- activity strip ---------------------------------------------------- */
+
+.activity {
+  position: relative;
+  height: 16px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--accent-2);
+  color: var(--accent);
+  opacity: 0;
+  transition: opacity 400ms ease;
+}
+.activity-fill {
+  position: absolute; inset: 0;
+  width: 34%;
+  border-radius: 999px;
+  background: var(--accent);
+}
+.activity-hazard { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; }
+
+/* thinking: the strip sweeps, continuously. This is the "work is happening" cue. */
+html[data-state="thinking"] .activity { opacity: 1; }
+html[data-state="thinking"] .activity-fill { animation: sweep 1.9s cubic-bezier(.55,0,.45,1) infinite; }
+
+/* stalled: strip is FULL WIDTH, FROZEN, and hazard-striped.
+   The absence of motion is the signal. */
+html[data-state="stalled"] .activity { opacity: 1; height: 22px; }
+html[data-state="stalled"] .activity-fill { width: 100%; animation: none; opacity: 0.25; }
+html[data-state="stalled"] .activity-hazard { opacity: 1; }
+
+html[data-state="listening"] .activity { opacity: 1; }
+html[data-state="listening"] .activity-fill { width: 100%; animation: breathe 2.4s ease-in-out infinite; }
+
+/* ---- footer ------------------------------------------------------------ */
+
+.elapsed {
+  font-family: var(--mono);
+  font-size: clamp(30px, 5vw, 52px);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  letter-spacing: -0.02em;
+}
+.elapsed:empty { display: none; }
+
+/* ---- per-state palette -------------------------------------------------- */
+
+html[data-state="idle"]            { --accent: #46586b; --accent-2: #131a22; --pulse: 0.00; }
+html[data-state="listening"]       { --accent: #3ddc97; --accent-2: #10251d; --pulse: 0.10; }
+html[data-state="thinking"]        { --accent: #34c3ff; --accent-2: #0c1f2b; --pulse: 0.13; }
+html[data-state="stalled"]         { --accent: #ffa62b; --accent-2: #2a1c06; --pulse: 0.20; }
+html[data-state="needs_attention"] { --accent: #ff4d8d; --accent-2: #2c0c19; --pulse: 0.30; }
+html[data-state="offline"]         { --accent: #ff4d5e; --accent-2: #250b0e; --pulse: 0.16; }
+html[data-state="boot"]            { --accent: #46586b; --accent-2: #131a22; --pulse: 0.00; }
+
+/* stalled gets a slow whole-panel pulse: unmistakable in peripheral vision,
+   and slow enough not to nag. */
+html[data-state="stalled"] #panel { animation: wash 2.6s ease-in-out infinite; }
+html[data-state="needs_attention"] #panel { animation: wash 1.3s ease-in-out infinite; }
+
+/* ---- stale overlay ------------------------------------------------------ */
+/* A frozen panel is worse than an error panel, so once the heartbeat stops the
+   whole surface visibly degrades rather than continuing to look authoritative. */
+
+.stale {
+  position: absolute; inset: 0;
+  display: none;
+  flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  background: repeating-linear-gradient(45deg, rgb(10 2 5 / 0.975) 0 24px, rgb(46 6 14 / 0.975) 24px 48px);
+  z-index: 10;
+}
+.stale-title {
+  font-size: 96px; font-weight: 800; letter-spacing: -0.035em;
+  color: #ff5f6d; line-height: 1;
+  text-shadow: 0 0 34px rgb(255 40 60 / 0.55);
+  /* Pulses to draw the eye, but never dims to the point of being unreadable —
+     an error you cannot read is just a dark screen. */
+  animation: stale-pulse 1.8s ease-in-out infinite;
+}
+.stale-sub { font-size: 27px; color: #d09aa2; font-family: var(--mono); }
+
+html[data-stale="yes"] .stale { display: flex; }
+/* Kill every animation underneath: nothing on this panel is live any more. */
+html[data-stale="yes"] .activity-fill,
+html[data-stale="yes"] .glyph::after,
+html[data-stale="yes"] #panel { animation: none !important; }
+
+/* ---- laptop button ------------------------------------------------------ */
+
+.laptop {
+  display: flex; flex: none;
+  /* Anchor right even when the elapsed timer is hidden (idle/offline). */
+  margin-left: auto; align-items: center; gap: 14px;
+  /* Comfortable touch target with cold fingers. */
+  min-height: 92px; padding: 14px 24px;
+  border: 2px solid #26313d;
+  border-radius: 18px;
+  background: #0d131a;
+  color: var(--ink-dim);
+  font: inherit; font-size: 19px; font-weight: 600; line-height: 1.18;
+  text-align: left;
+  cursor: none;
+  transition: transform 120ms ease, background 200ms ease, border-color 200ms ease;
+}
+.laptop:active { transform: scale(0.96); background: #16202b; border-color: var(--accent); }
+.laptop-icon {
+  width: 34px; height: 24px; flex: none;
+  border: 3px solid currentColor; border-radius: 4px 4px 0 0; border-bottom-width: 5px;
+}
+.laptop-count {
+  font-family: var(--mono); font-size: 34px; font-weight: 800;
+  color: var(--ink); font-variant-numeric: tabular-nums;
+}
+.laptop.saved { border-color: #3ddc97; }
+.laptop.failed { border-color: #ffa62b; }
+
+.toast {
+  position: absolute; left: 50%; bottom: 26px;
+  transform: translateX(-50%) translateY(14px);
+  padding: 10px 20px; border-radius: 999px;
+  background: #16202b; color: var(--ink);
+  font-size: 19px; opacity: 0;
+  transition: opacity 260ms ease, transform 260ms ease;
+  pointer-events: none;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ---- keyframes ---------------------------------------------------------- */
+
+@keyframes spin   { to { transform: rotate(360deg); } }
+@keyframes sweep  { 0% { left: -34%; } 100% { left: 100%; } }
+@keyframes breathe{ 0%,100% { opacity: 0.30; } 50% { opacity: 0.85; } }
+@keyframes throb  { 0%,100% { transform: scale(1); opacity: 1; } 50% { transform: scale(0.74); opacity: 0.55; } }
+@keyframes ripple { 0% { transform: scale(0.4); opacity: 1; } 100% { transform: scale(1); opacity: 0; } }
+@keyframes blink  { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+@keyframes stale-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.68; } }
+@keyframes wash   { 0%,100% { filter: brightness(1); } 50% { filter: brightness(1.32); } }
+@keyframes hard-pulse { 0%,60% { opacity: 1; } 61%,100% { opacity: 0.35; } }
+
+/* Respect the system setting, but keep stalled distinguishable: when motion is
+   reduced, the hazard texture and colour still carry the difference. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+  html[data-state="thinking"] .activity-fill { width: 100%; opacity: 0.9; }
+}

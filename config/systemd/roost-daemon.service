@@ -1,0 +1,38 @@
+[Unit]
+Description=roost agent state daemon
+Documentation=https://github.com/lost-in-the/roost
+
+# Deliberately NOT ordered against the broker. EMQX is not managed by this
+# machine's systemd (it is shared with Home Assistant and Zigbee2MQTT and lives
+# elsewhere), so an After= on it could never work. Broker readiness is handled
+# in code instead: the daemon reconnects with exponential backoff, indefinitely,
+# and publishes nothing until it is genuinely connected.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Work/lost-in-the/roost
+
+# Secrets are resolved at start by the 1Password CLI and handed to the daemon as
+# ordinary environment variables. No credential is stored in this unit or in the
+# repository: .env holds op:// REFERENCES, not values.
+#
+# `op run` needs an unlocked 1Password session. If the desktop agent is not
+# available at boot, switch to a service-account token:
+#   Environment=OP_SERVICE_ACCOUNT_TOKEN=...   <- do NOT inline it; use an
+#   EnvironmentFile= pointing at a 0600 file outside the repository.
+ExecStart=/usr/bin/op run --env-file=%h/Work/lost-in-the/roost/.env -- /usr/bin/node %h/Work/lost-in-the/roost/daemon/index.js
+
+Restart=always
+RestartSec=5s
+
+# Creates and owns %S/roost, the default home of the laptop-open log.
+StateDirectory=roost
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=roost-daemon
+
+[Install]
+WantedBy=default.target
