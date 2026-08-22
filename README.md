@@ -231,6 +231,8 @@ cat    ~/.local/state/roost/laptop-opens.log      # when
 - [`config/README.md`](config/README.md) — Hyprland version drift and how each
   pinning requirement was verified
 - [`schema/CHANGELOG.md`](schema/CHANGELOG.md) — the contract's history
+- [`docs/M2-touch-approvals.md`](docs/M2-touch-approvals.md) — design note for
+  the next milestone. Nothing built; read §6 first, it gates the rest.
 - [`docs/desk-agent-presence-plan.md`](docs/desk-agent-presence-plan.md) — why
   this exists at all; start at the TL;DR, then §5, then §3
 - [`docs/slice1-delivery-plan.md`](docs/slice1-delivery-plan.md) — flows and
