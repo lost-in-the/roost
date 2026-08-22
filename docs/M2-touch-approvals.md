@@ -208,6 +208,56 @@ Approvals ask **more** of that interface than M1 does:
 | Hooks | Sufficient | Probably not — a hook can fire on an event, but does not obviously give you a way to hand a decision back |
 | Consequence | — | May force the gateway/API option, even though it lost on latency for reads |
 
+> ### ✅ RESOLVED 2026-08-22 — it is the gateway client, and the socket is a trap
+>
+> Investigated against a live OpenClaw **2026.7.2-beta.7** runtime on the same machine roost runs on.
+> The dependency above is settled; §6 no longer gates M2.
+>
+> **Build a gateway operator client. Do not build a socket responder.**
+>
+> There is an `exec-approvals.sock` path in the approvals config, and it looks exactly like the
+> answer: OpenClaw connects as the client, the responder binds, one JSONL line each way
+> (`{"type":"request",token,id,request}` → `{"type":"decision",decision}`). **It is dead code in this
+> release.** `requestExecApprovalViaSocket` has *zero* call sites — four files mention it, being the
+> definition plus three re-export barrels, one of them a `.d.ts`. No socket file exists on disk. The
+> path *is* consumed, but by `requestExecHostViaSocket`, a different protocol gated on
+> `platform === "darwin"`: it is the Mac companion **exec transport**, not an approval responder.
+> The name is a red herring and would cost you the milestone.
+>
+> **The real surface**, both verified live:
+>
+> | Flow | Methods |
+> |---|---|
+> | Claude-native tools (Bash, Read, …) | `plugin.approval.request` → `plugin.approval.waitDecision` / `.list` / `.resolve` |
+> | OpenClaw's own exec tool | `exec.approval.request` / `.waitDecision` / `.resolve`, broadcast as `exec.approval.requested` |
+>
+> Answer both; they are different agents' paths. Demonstrated end to end: a prompt was raised,
+> answered in a browser client, and resolved in **4944 ms**.
+>
+> **Latency is no longer the objection it was.** The concern above assumed a remote gateway. The
+> local gateway is loopback on this same host, so the gateway/API option does not pay the cost that
+> made it lose for reads.
+>
+> **Four constraints that change the design — read these before §2:**
+>
+> 1. **An approval needs a *connected* client at the moment it is raised.** With none connected the
+>    gateway returns no id and the call denies in ~5 s with reason `unavailable`. **Nothing is
+>    queued**, and `approvals pending` stays empty. So roost must hold a persistent connection, not
+>    poll. A roost outage means denials, not a backlog.
+> 2. **`Bash` can never earn allow-always.** The decision set is forced to `["allow-once","deny"]`
+>    whenever the tool is `Bash`. Every single run prompts; roost cannot mint a durable grant, and
+>    any UI affordance implying "always allow" would be lying.
+> 3. **Late-decision auto-answer must match on content, not ids.** An expired approval cannot be
+>    re-opened — but a retry raises a *fresh* one, which is how "approve after the fact" is
+>    achievable at all. `toolCallId` is regenerated per retry and there is no deterministic id on the
+>    native path, so match on `agentId` + `toolName` + `detail` (which carries the compact command
+>    JSON).
+> 4. **Timeouts:** 120 s default for a plugin approval (600 s max). Oversized Bash inputs are denied
+>    outright *before* any prompt is raised, so some requests will never reach the panel.
+>
+> Evidence and the fuller reasoning: `homelab` repo, `docs/open-questions-2026-08-22.md` Q3, and
+> backlog item 074.
+
 **This is the only part that cannot be designed around now.** Everything in §2
 to §5 can be built and verified against the mock first, exactly as M1 was: extend
 `MockStateSource` to emit approval-shaped prompts, build the UI, wire the tap to
