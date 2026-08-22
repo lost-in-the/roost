@@ -31,7 +31,7 @@ all out of scope.
 
 | | |
 |---|---|
-| State contract, daemon, renderer | working, 79 tests |
+| State contract, daemon, renderer | working, 105 tests |
 | Hyprland output pinning | working, verified against a headless 1024×600 stand-in |
 | **Physical panel** | **not yet connected** — see [Connecting the real panel](#connecting-the-real-panel) |
 | **OpenClaw integration** | **stubbed** — see [`docs/DECISIONS.md`](docs/DECISIONS.md) D-001 |
@@ -186,12 +186,16 @@ daemon/
   publisher.js      MQTT: retained, Last Will, heartbeat, backoff
   http.js           serves the renderer, accepts laptop-open taps
   laptop-log.js     the durable counter
+  instrument.js     the counter as a published, retained value
   config.js         environment parsing
   sources/
     state-source.js the interface everything else is built against
     mock.js         scripted timelines
     openclaw.js     STUB — see docs/DECISIONS.md D-001
 renderer/           plain HTML/CSS/JS, no framework, no build step
+  components/       shared UI, mountable by any surface
+  staleness.js      when to stop believing the panel
+  topics.js         which subscription a message came from
 schema/             the state contract, versioned, with a changelog
 config/hypr/        Hyprland output + workspace pinning
 config/systemd/     user units
@@ -199,7 +203,7 @@ scripts/            install, derive-monitor, launch-panel, dev-broker
 docs/               decisions and the original plans
 ```
 
-`npm test` runs 79 tests with Node's built-in runner. Aggregation and the log are
+`npm test` runs 105 tests with Node's built-in runner. Aggregation and the log are
 tested as pure units; the publisher is tested against a **real** in-process
 broker, including cutting sockets to prove the Last Will fires and reconnection
 continues.
@@ -209,7 +213,18 @@ continues.
 ## The "had to open the laptop" button
 
 The success metric is *zero laptop-opens motivated solely by checking on an
-agent, across 30 days*. The button in the bottom-right corner is the instrument.
+agent, across 30 days*. The recessive glyph in the bottom-right corner is the
+instrument: an icon and a count at 20% opacity, with a full 88px touch target
+behind it. It is tapped a handful of times a month, so it must not compete with
+the state readout.
+
+It lives in `renderer/components/laptop-counter.js` so any future surface mounts
+the same behaviour. A second layout is available with `?instrument=header`.
+
+The count is published retained on `roost/instrument/laptop-opens`, separate
+from agent state because the two have opposite failure semantics — see
+[`schema/CHANGELOG.md`](schema/CHANGELOG.md). Reads come over MQTT; a tap goes
+out over loopback HTTP, which keeps the browser credential subscribe-only.
 
 One tap appends a timestamped line to `~/.local/state/roost/laptop-opens.log` and
 increments the count. The write is `fsync`ed before the tap is acknowledged, and
