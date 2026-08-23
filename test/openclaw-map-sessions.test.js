@@ -121,3 +121,29 @@ test('a key with no prefix at all is used unchanged', () => {
   })]);
   assert.equal(agent.label, 'plain-key');
 });
+
+// The REAL key of the --session-id run, read back off the gateway afterwards.
+// The earlier test guessed a bare `explicit:...`; the gateway actually nests it
+// under the agent prefix, so stripping one prefix was not enough.
+test('strips a nested agent+explicit prefix, the shape --session-id really produces', () => {
+  const [agent] = mapSessionsToAgents([session({
+    hasActiveRun: true, displayName: null,
+    key: 'agent:labby:explicit:roost-stall-probe',
+  })]);
+  assert.equal(agent.label, 'roost-stall-probe');
+});
+
+test('a session name that merely contains a colon is never treated as a prefix', () => {
+  const [agent] = mapSessionsToAgents([session({
+    hasActiveRun: true, displayName: null, key: 'agent:labby:deploy:staging',
+  })]);
+  assert.equal(agent.label, 'deploy:staging', 'only known routing keywords are stripped');
+});
+
+test('an iPhone session key has no prefix and is left alone', () => {
+  const [agent] = mapSessionsToAgents([session({
+    hasActiveRun: true, displayName: null,
+    key: 'ios-342694d8-da30-4fe3-a52d-2e129eb6e0dc',
+  })]);
+  assert.equal(agent.label, 'ios-342694d8-da30-4fe3-a52d-2e129eb6e0dc');
+});

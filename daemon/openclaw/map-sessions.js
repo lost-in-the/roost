@@ -32,24 +32,31 @@
  * A human-readable name for a session.
  *
  * `displayName` is null on every real session observed on this gateway, so the
- * key carries the only meaningful name. Two key shapes have been seen live:
+ * key carries the only meaningful name. Four key shapes have been seen live:
  *
- *   agent:labby:test-101-final    a routed agent session
- *   explicit:roost-stall-probe    one created with --session-id
+ *   main                                      the default session
+ *   ios-342694d8-da30-4fe3-a52d-2e129eb6e0dc  from the paired iPhone
+ *   agent:labby:test-101-final                a routed agent session
+ *   agent:labby:explicit:roost-stall-probe    created with --session-id
  *
- * Both lead with routing information that means nothing to someone glancing at
- * a 7" panel across the room. The agent shape is stripped first and by name, so
- * a session called `deploy:staging` keeps its colon; anything else loses just
- * one leading `prefix:`. A key with no prefix is used unchanged.
+ * Only KNOWN routing keywords are stripped, and only from the front. Stripping
+ * any `word:` generically would mangle a session legitimately named
+ * `deploy:staging` down to `staging`, so the rule is deliberately narrow: an
+ * `agent:<agentId>:` prefix, then an `explicit:` prefix, and nothing else.
+ * Whatever survives is what a human named, which is what belongs on a 7" panel
+ * seen across a room.
  */
+const ROUTING_PREFIXES = [
+  /^agent:[^:]+:/,   // routed to a named agent
+  /^explicit:/,      // created with --session-id
+];
+
 export function sessionLabel(s) {
   if (s?.displayName) return s.displayName;
-  const key = s?.key;
+  let key = s?.key;
   if (typeof key !== 'string') return null;
-  const agentShape = /^agent:[^:]+:(.+)$/.exec(key);
-  if (agentShape) return agentShape[1];
-  const prefixed = /^[^:]+:(.+)$/.exec(key);
-  return prefixed ? prefixed[1] : key;
+  for (const prefix of ROUTING_PREFIXES) key = key.replace(prefix, '');
+  return key || s.key;
 }
 
 export function mapSessionsToAgents(sessions = []) {
