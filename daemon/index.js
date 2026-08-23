@@ -6,7 +6,7 @@ import { startHttpServer } from './http.js';
 import { LaptopLog } from './laptop-log.js';
 import { instrumentPayload } from './instrument.js';
 import { MockStateSource, SCRIPTS } from './sources/mock.js';
-import { OpenClawStateSource } from './sources/openclaw.js';
+import { createOpenClawSource, resolveDeviceFile } from './openclaw/connect.js';
 
 /**
  * The roost state daemon.
@@ -21,8 +21,9 @@ const log = (msg) => console.log(`[roost] ${new Date().toISOString()} ${msg}`);
 
 function buildSource(config) {
   if (config.source === 'openclaw') {
-    const source = new OpenClawStateSource();
+    const source = createOpenClawSource();
     source.on('warning', (m) => log(`WARNING ${m}`));
+    log(`using OpenClawStateSource, device ${resolveDeviceFile()}`);
     return source;
   }
   const script = SCRIPTS[config.mockScript];

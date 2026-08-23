@@ -1,61 +1,122 @@
 import { StateSource } from './state-source.js';
+import { deviceSigningDeps } from '../openclaw/ed25519.js';
+import { mapSessionsToAgents } from '../openclaw/map-sessions.js';
 
 /**
- * OpenClawStateSource — NOT IMPLEMENTED. This is the M1 stub.
+ * OpenClawStateSource — agent presence, read from the OpenClaw gateway.
  *
- * ────────────────────────────────────────────────────────────────────────────
- * TODO: implement against a real OpenClaw instance.
- * ────────────────────────────────────────────────────────────────────────────
+ * Connects as a paired operator device scoped `operator.read` and nothing more.
+ * Pair once with scripts/pair-openclaw.mjs; the device token it mints lives
+ * beside its keypair in ~/.local/state/roost/openclaw-device.json.
  *
- * WHY THIS IS STILL A STUB
- * OpenClaw is not installed on this machine yet. As of the M1 build there was
- * no `openclaw` binary on PATH, no `~/.openclaw` or `~/.config/openclaw`, no
- * matching pacman or npm package, and no Stream Deck integration running that
- * could be inspected for the state mechanism it already consumes. Choosing a
- * mechanism now would be guessing, and a wrong guess is more expensive than an
- * honest stub, because everything downstream would be built against a fiction.
+ * PUSH, NOT POLL. The gateway broadcasts session changes, and its own client
+ * guide (docs/gateway/clients.md) says to subscribe rather than poll. Nothing
+ * is queued for a disconnected client, so every reconnect is treated as a NEW
+ * projection: re-subscribe, then re-snapshot. A missed event during a
+ * disconnect can never be recovered by waiting for it.
  *
- * THE THREE CANDIDATE MECHANISMS (see docs/DECISIONS.md, D-001)
- *
- *   1. Hooks — OpenClaw runs a command on lifecycle events. Cheapest to adopt:
- *      the hook POSTs an agent record to this daemon and nothing needs polling.
- *      Preferred, because it matches how the Stream Deck integration is
- *      described as already working ("OpenClaw already pushes state").
- *
- *   2. Webhook plugin — OpenClaw POSTs to an HTTP endpoint we expose. Same
- *      shape as (1) but configured in OpenClaw rather than as a shell hook.
- *
- *   3. Gateway / API polling — we ask OpenClaw for the current run list on a
- *      timer. Most robust to missed events, worst latency, and the only option
- *      that needs credentials.
- *
- * HOW TO FINISH IT
- *   - Inspect the existing Stream Deck integration to see which mechanism it
- *     consumes. DO NOT MODIFY IT — read only. It is the ground truth.
- *   - Emit `agents` with the COMPLETE current agent set on every change, never
- *     a delta. See state-source.js for the record shape.
- *   - Map OpenClaw's own vocabulary onto the five source states. `stalled` is
- *     the one that will not map directly: it is most likely derived here, from
- *     "no output for N seconds while a run is active", not reported upstream.
- *   - Nothing else needs to change. Aggregation, publishing, staleness, Last
- *     Will and the whole renderer are already built and tested against
- *     MockStateSource behind this same interface.
+ * The snapshot is a full `sessions.list` rather than an incremental patch.
+ * StateSource requires the complete agent set on every emission anyway, so
+ * keeping a local projection would add state this daemon has no business
+ * holding — and would drift from the gateway on any missed event.
  */
+
+/** Events that mean the session set may have changed. Verified present in the gateway's registry. */
+const SESSION_EVENTS = new Set([
+  'sessions.changed',
+  'session.updated',
+  'session.started',
+  'session.ended',
+  'session.closed',
+  'session.replaced',
+  'session.error',
+  'agent.run.started',
+  'agent.run.finished',
+  'openclaw.session.state',
+]);
+
+const READ_ONLY_SCOPES = ['operator.read'];
+
 export class OpenClawStateSource extends StateSource {
-  constructor(options = {}) {
+  constructor({
+    createClient,
+    url = 'ws://127.0.0.1:19789',
+    deviceToken,
+    deviceIdentity,
+    scopes = READ_ONLY_SCOPES,
+    // Bursts of events (a run starting fires several) collapse into one
+    // snapshot instead of one request each.
+    debounceMs = 150,
+  } = {}) {
     super();
-    this.options = options;
-    this.started = false;
+    Object.assign(this, { createClient, url, deviceToken, deviceIdentity, scopes, debounceMs });
+    this.client = null;
+    this.stopped = true;
+    this.timer = null;
+    this.inFlight = false;
   }
 
   start() {
-    this.started = true;
-    // Deliberately emits nothing. The panel will sit at idle, which is honest:
-    // this daemon genuinely has no idea what any agent is doing.
-    this.emit('warning',
-      'OpenClawStateSource is a stub and reports no agents. ' +
-      'Run with ROOST_SOURCE=mock for a working panel. See daemon/sources/openclaw.js.');
+    this.stopped = false;
+    this.client = this.createClient({
+      url: this.url,
+      deviceToken: this.deviceToken,
+      deviceIdentity: this.deviceIdentity,
+      role: 'operator',
+      scopes: this.scopes,
+      // Closed registries; see daemon/openclaw/pairing.js for why not "roost"
+      // and why the mode is not "backend".
+      clientName: 'gateway-client',
+      clientDisplayName: 'roost',
+      mode: 'cli',
+      hostDeps: deviceSigningDeps,
+
+      onHelloOk: () => { void this.resync(); },
+      onEvent: (evt) => { if (SESSION_EVENTS.has(evt?.event)) this.schedule(); },
+      onConnectError: (err) => this.emit('warning', `openclaw connect: ${err?.message ?? err}`),
+    });
+    this.client.start();
   }
 
-  stop() { this.started = false; }
+  /** Re-establish the subscription, then replace the projection. */
+  async resync() {
+    if (this.stopped) return;
+    try {
+      // Subscribe BEFORE snapshotting: the reverse order leaves a window where
+      // a change lands after the read and before the subscription exists.
+      await this.client.request('sessions.subscribe', {});
+      await this.snapshot();
+    } catch (err) {
+      this.emit('warning', `openclaw resync: ${err?.message ?? err}`);
+    }
+  }
+
+  async snapshot() {
+    if (this.stopped || this.inFlight) return;
+    this.inFlight = true;
+    try {
+      const res = await this.client.request('sessions.list', {});
+      if (this.stopped) return;
+      this.emit('agents', mapSessionsToAgents(res?.sessions ?? []));
+    } catch (err) {
+      this.emit('warning', `openclaw sessions.list: ${err?.message ?? err}`);
+    } finally {
+      this.inFlight = false;
+    }
+  }
+
+  schedule() {
+    if (this.stopped) return;
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => { void this.snapshot(); }, this.debounceMs);
+    this.timer.unref?.();
+  }
+
+  stop() {
+    if (this.stopped) return;   // idempotent: stop() may be called twice
+    this.stopped = true;
+    clearTimeout(this.timer);
+    this.timer = null;
+    try { this.client?.stop(); } catch { /* stopping is best-effort */ }
+  }
 }

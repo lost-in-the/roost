@@ -20,17 +20,9 @@
  * device token, which is scoped and independently revocable.
  */
 
-import { signPayload, publicKeyBase64Url } from './ed25519.js';
+import { deviceSigningDeps } from './ed25519.js';
 
 const READ_ONLY_SCOPES = ['operator.read'];
-
-// GatewayClient ships throwing stubs for these and refuses to connect with
-// "device signature dependency is not configured" until they are supplied.
-// The Node entry owns its socket but not its crypto: the host provides signing.
-const DEVICE_SIGNING_DEPS = {
-  signDevicePayload: (privateKeyPem, payload) => signPayload(privateKeyPem, payload),
-  publicKeyRawBase64UrlFromPem: (publicKeyPem) => publicKeyBase64Url(publicKeyPem),
-};
 
 export function pairDevice({
   createClient,
@@ -75,7 +67,7 @@ export function pairDevice({
       clientDisplayName: 'roost',
       clientVersion,
       mode: 'cli',
-      hostDeps: DEVICE_SIGNING_DEPS,
+      hostDeps: deviceSigningDeps,
 
       onHelloOk: (hello) => {
         const deviceToken = hello?.auth?.deviceToken;

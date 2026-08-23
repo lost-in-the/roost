@@ -40,3 +40,13 @@ export function signPayload(privateKeyPem, payload) {
 export function fingerprint(publicKeyPem) {
   return crypto.createHash('sha256').update(rawPublicKey(publicKeyPem)).digest('hex');
 }
+
+/**
+ * GatewayClient ships throwing stubs for its crypto and refuses to connect with
+ * "device signature dependency is not configured" until these are supplied.
+ * The Node entry owns its socket but not its signing.
+ */
+export const deviceSigningDeps = {
+  signDevicePayload: (privateKeyPem, payload) => signPayload(privateKeyPem, payload),
+  publicKeyRawBase64UrlFromPem: (publicKeyPem) => publicKeyBase64Url(publicKeyPem),
+};
