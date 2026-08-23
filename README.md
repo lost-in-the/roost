@@ -31,15 +31,24 @@ all out of scope.
 
 | | |
 |---|---|
-| State contract, daemon, renderer | working, 105 tests |
-| Hyprland output pinning | working, verified against a headless 1024×600 stand-in |
-| **Physical panel** | **not yet connected** — see [Connecting the real panel](#connecting-the-real-panel) |
-| **OpenClaw integration** | **stubbed** — see [`docs/DECISIONS.md`](docs/DECISIONS.md) D-001 |
+| State contract, daemon, renderer | working, 155 tests |
+| Hyprland output pinning | working, verified on the physical panel |
+| Physical panel | connected and live, 1024×600 on `HDMI-A-1` |
+| OpenClaw integration | working, paired device scoped `operator.read` |
+| `stalled` detection | **not mapped yet** — see [`docs/DECISIONS.md`](docs/DECISIONS.md) D-001 |
+| **Touch** | **no touchscreen is attached** — see below |
 
-The panel is driven by `MockStateSource`, which loops through every state on a
-timer. That is a deliberate M1 outcome, not a shortfall: everything downstream
-of the `StateSource` interface is built and verified, so the real adapter is a
-swap behind it.
+M1 is complete. The daemon reads real agent presence from the OpenClaw gateway
+and the panel tracks live runs, verified during an actual chat: `idle →
+thinking → idle` in step with the conversation turns, event-driven rather than
+polled. `MockStateSource` remains the default and drives the full state loop
+with no gateway, no broker and no panel hardware.
+
+**The panel has no touch input.** The kernel sees no touch controller and the
+USB tree has none: these panels carry video on HDMI and touch on a separate USB
+lead, and nothing has enumerated. The only touch device present is Sunshine's
+virtual `Touch passthrough`, which is not the panel. This blocks M2 (touch
+approvals) until the cable is connected.
 
 ---
 
@@ -144,6 +153,39 @@ on 0.56.2 — there are six, and two of them required real workarounds.
 
 ---
 
+## Connecting to OpenClaw
+
+roost reads agent presence from the OpenClaw gateway as a **paired device**, not
+by borrowing the gateway's shared token. Pair once:
+
+```sh
+sudo -n cat /var/lib/labby/credentials/gateway-token | node scripts/pair-openclaw.mjs
+ROOST_SOURCE=openclaw npm start
+```
+
+The shared token is read on stdin, used once for bootstrap authentication, and
+written nowhere. What roost keeps is its own device token, scoped
+`operator.read` and nothing more, stored 0600 beside the Ed25519 key it is bound
+to in `~/.local/state/roost/openclaw-device.json`.
+
+That scope is exactly what a presence panel needs — `sessions.list`,
+`sessions.subscribe`, read-only events. roost cannot start a run, send a
+message, or answer an approval. Revoke it on its own, without disturbing any
+other paired client:
+
+```sh
+openclaw devices revoke --device <id> --role operator
+```
+
+The token is **not** kept in a password manager. It is useless without the local
+private key, so a vault would hold half a credential; recovery is re-pairing,
+which is the one command above.
+
+roost subscribes rather than polls. Nothing is queued for a disconnected client,
+so every reconnect re-subscribes and takes a fresh full snapshot.
+
+---
+
 ## Changing the schema
 
 The state contract is the one thing that is expensive to get wrong: every screen
@@ -203,7 +245,7 @@ scripts/            install, derive-monitor, launch-panel, dev-broker
 docs/               decisions and the original plans
 ```
 
-`npm test` runs 105 tests with Node's built-in runner. Aggregation and the log are
+`npm test` runs 155 tests with Node's built-in runner. Aggregation and the log are
 tested as pure units; the publisher is tested against a **real** in-process
 broker, including cutting sockets to prove the Last Will fires and reconnection
 continues.

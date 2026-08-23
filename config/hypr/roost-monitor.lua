@@ -22,7 +22,9 @@ return {
   -- description-based selector is used.
   output = nil,
 
-  -- This script proves the output is PRESENT. It cannot prove the pin works,
-  -- so it never sets this. Flip it by hand once the panel renders for real.
-  verified = false,
+  -- derive-monitor.sh only proves the output is PRESENT, so it always writes
+  -- false. Flipped by hand on 2026-08-23: the panel was pinned, the `roost`
+  -- workspace bound to it, and the renderer placed fullscreen at 1024x600 on
+  -- the real glass. Re-running derive-monitor.sh resets this to false.
+  verified = true,
 }

@@ -66,13 +66,27 @@ card1-DP-3      disconnected
 card1-HDMI-A-1  connected
 ```
 
-So `roost-monitor.lua` ships a **placeholder** description and
-`verified = false`. Everything else was verified against a Hyprland **headless
-output** sized to 1024x600, which stands in for the panel.
+**That is no longer the situation.** As of 2026-08-23 the panel is connected on
+`HDMI-A-1` and everything below is verified on the real glass: the output is
+pinned by description, the `roost` workspace is bound to it, and the renderer
+sits fullscreen at 1024x600. `roost-monitor.lua` carries the real description
+and `verified = true`.
 
-Description-based matching itself was verified separately, against the Dell,
-which does have a description — a workspace bound to
-`desc:Dell Inc. Dell AW3418DW GF6N89940T8L` landed on `HDMI-A-1` correctly.
+The panel still reports a **cloned EDID** — `Lenovo Group Limited LEN L1950wD
+B3432845`, serial `0x01010101` (a placeholder), max image size 15cm x 10cm. The
+name is fiction; the size and the 1024x600 preferred timing are the panel's own.
+Pinning uses that string because it is what Hyprland sees and it is stable.
+
+It also advertises 1920x1080, 1440x900 and 1280x720. **The hardware refuses to
+sync any of them.** All three were set on the live output and it stayed at
+1024x600 every time. Do not build a fallback around those modes.
+
+⚠ **There is no touch input.** `/proc/bus/input/devices` shows no touch
+controller and the USB tree has none. The only touch device on the machine is
+`Touch passthrough` (`Vendor=beef Product=dead`, `/devices/virtual/input/`),
+which is Sunshine's virtual input for Moonlight. These panels carry video on
+HDMI and touch on a separate USB lead; that lead has never enumerated. A missing
+driver would still show a device, so this is a cable problem.
 
 ---
 

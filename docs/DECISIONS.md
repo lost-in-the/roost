@@ -31,7 +31,7 @@ once the Stream Deck or Home Assistant start reading the topic.
 
 ---
 
-## D-001 — Which OpenClaw mechanism supplies state: **unresolved, stubbed**
+## D-001 — Which OpenClaw mechanism supplies state: ~~unresolved~~ **RESOLVED 2026-08-23: the gateway, subscribed**
 
 **Decision.** `OpenClawStateSource` is a stub that emits no agents and logs a
 warning. M1 ships driven by `MockStateSource`. `ROOST_SOURCE` defaults to
@@ -69,6 +69,45 @@ built and tested behind the interface and do not care. Expect one genuinely new
 piece of work: **`stalled` almost certainly has to be derived here** — as "a run
 is active but has produced no output for N seconds" — rather than being reported
 by OpenClaw, because it is a judgement about silence rather than an event.
+
+> ### ✅ RESOLVED 2026-08-23 — the gateway, subscribed, as a paired device
+>
+> OpenClaw arrived as the Labby gateway: `openclaw-labby.service`, openclaw
+> **2026.7.2-beta.7**, loopback `127.0.0.1:19789`, running as the `labby`
+> service user. `daemon/sources/openclaw.js` is no longer a stub.
+>
+> **It is the gateway, not hooks.** The preference above was wrong, and it was
+> wrong for a reason worth keeping: the "already pushes state to the Stream
+> Deck" premise never held on this machine. The gateway turned out to push
+> anyway — `sessions.subscribe` plus change events — so the latency objection
+> that made hooks attractive does not apply. The gateway is loopback on this
+> same host.
+>
+> **Verified live**, not from the bundle's string registry: `sessions.list`,
+> `agents.list` and `health.summary` all answered real calls, and during an
+> actual Labby chat the panel tracked `idle → thinking → idle → thinking →
+> idle` in step with the conversation turns. Those transitions are event-driven;
+> a poll would have held the startup snapshot.
+>
+> **Credential.** roost pairs as a device and holds its own token scoped
+> `operator.read`, revocable alone. It does NOT borrow the shared gateway token,
+> which is the same credential the iPhone and Control UI use. The gateway's own
+> docs are explicit: "Do not create a per-client bearer token by hand-editing
+> `openclaw.json` ... let device pairing mint the client token."
+>
+> **Snapshot, not delta.** Every emission is a full `sessions.list`. Keeping a
+> local projection would add state this daemon has no business holding and would
+> drift from the gateway on any missed event — and nothing is queued for a
+> disconnected client, so a missed event can never be recovered by waiting.
+>
+> **The `stalled` prediction is still open, and now looks likely wrong.**
+> `session.stalled` and `session.stuck` both exist in the gateway's registry, so
+> OpenClaw may well report it rather than leaving it to be derived from silence.
+> But every session observed live reported only `done` or `timeout`, so it is
+> still unknown whether those are status *values* or *event* names. It is
+> deliberately unmapped: distinguishing thinking from stalled is the reason
+> roost exists, and a wrong mapping is worse than an absent one. Settling it
+> needs a run that actually hangs.
 
 ---
 
@@ -250,7 +289,7 @@ start working.
 
 ---
 
-## D-010 — Verified against a headless output, not the real panel
+## D-010 — ~~Verified against a headless output, not the real panel~~ **CLOSED 2026-08-23: verified on the panel**
 
 **Decision.** All Hyprland verification used a Hyprland headless output sized to
 1024×600. `config/hypr/roost-monitor.lua` ships a **placeholder** description
@@ -269,6 +308,34 @@ separately against the Dell, which has one.
 the result to `~/.config/hypr/`, and `hyprctl reload`. Nothing else should need
 to change.
 
+> ### ✅ CLOSED 2026-08-23 — done, and nothing else did need to change
+>
+> The panel is connected on `HDMI-A-1`. `derive-monitor.sh` → copy →
+> `hyprctl reload` was exactly the whole procedure, `hyprctl configerrors`
+> printed nothing, and the renderer came up fullscreen at 1024×600 on the first
+> attempt. `roost-monitor.lua` now carries the real description and
+> `verified = true`.
+>
+> **Description matching is now proven for this panel**, which is the part the
+> headless stand-in could not prove. The description is
+> `Lenovo Group Limited LEN L1950wD B3432845` — a **cloned EDID**, not a real
+> Lenovo: serial `0x01010101` is a placeholder and the max image size is
+> 15cm × 10cm, a 7" panel. The name is fiction but the string is stable, which
+> is all the selector needs. One consequence worth noting: a genuine
+> L1950wD attached later would collide.
+>
+> **Two things the stand-in could not have surfaced:**
+>
+> 1. The EDID advertises 1920x1080, 1440x900 and 1280x720. The hardware refuses
+>    to sync all three; the output stays at 1024x600. No fallback should assume
+>    otherwise.
+> 2. **There is no touch input.** Video is connected, touch is not — these
+>    panels carry touch on a separate USB lead and it has never enumerated. See
+>    the blocker at the top of `docs/M2-touch-approvals.md`.
+>
+> The stand-in technique itself is still documented in `config/README.md` and
+> still works; it remains the way to exercise this on hardware without a panel.
+
 ---
 
 ## D-011 — An in-process broker for development and tests
@@ -284,3 +351,50 @@ what a real subscriber receives, rather than mocking the client.
 
 **What changes if wrong.** Nothing in the daemon; the broker is test scaffolding
 and the daemon has no idea it exists.
+
+---
+
+## D-012 — roost holds its own device token, stored locally, not the shared gateway token in 1Password
+
+**Decision.** roost pairs with the OpenClaw gateway as a **device** and keeps the
+token that pairing mints, scoped `operator.read`. That token lives at
+`~/.local/state/roost/openclaw-device.json`, mode 0600, beside the Ed25519
+private key it is bound to. It is **not** stored in 1Password.
+
+**Why not the shared gateway token.** The obvious route was to copy
+`/var/lib/labby/credentials/gateway-token` into the Homelab vault and reference
+it from `.env`, which is how every other roost credential works. It would have
+worked. It was still wrong on two counts:
+
+- It is the **same credential** the iPhone and the Control UI use. Rotating it
+  because roost was compromised would break all three at once.
+- It carries far more than roost needs. roost reads presence; that token can do
+  anything the gateway permits.
+
+The gateway's own client guide settles it: *"Do not create a per-client bearer
+token by hand-editing `openclaw.json` … let device pairing mint the client
+token."* Device pairing gives a named, scoped, independently revocable
+credential — `openclaw devices revoke` kills roost's access alone.
+
+**Why not 1Password, given every other secret here is a `op://` reference.** The
+device token is bound to an Ed25519 private key that must exist on this machine.
+The token is useless without that key, and the key cannot meaningfully live in a
+vault, so 1Password would hold **half a credential** — enough to feel backed up,
+not enough to restore. Recovery is re-pairing, which is one command. This
+deliberately departs from the `.env` + `op run` pattern used for the broker
+credentials, and the departure is the point: those are portable secrets, this is
+a machine-bound one.
+
+**How the shared token is still used.** Once, for bootstrap authentication
+during pairing, piped on stdin so it never reaches argv, shell history or a
+process listing. It is written nowhere.
+
+**Scope.** `operator.read` covers `sessions.list`, `sessions.subscribe` and
+read-only events, and nothing else — roost cannot start a run, send a message or
+answer an approval. M2 needs `operator.approvals`; per the gateway docs a scope
+upgrade raises a **fresh pairing request** rather than silently widening an
+existing token, so that is an approval step, not a rebuild.
+
+**What changes if wrong.** Re-pair. `scripts/pair-openclaw.mjs` is idempotent and
+refuses to run twice; deleting the device file forces a fresh identity and a new
+pairing request.
