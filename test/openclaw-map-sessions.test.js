@@ -95,3 +95,29 @@ test('an idle agent still carries no label, even though a name is derivable', ()
   })]);
   assert.equal(agent.label, null);
 });
+
+// Observed live: session keys come in at least two shapes.
+//   agent:labby:test-101-final   a routed agent session
+//   explicit:roost-stall-probe   one created with --session-id
+// Both carry a prefix that means nothing to someone glancing at a 7" panel.
+
+test('strips the explicit: prefix too, since --session-id produces that shape', () => {
+  const [agent] = mapSessionsToAgents([session({
+    hasActiveRun: true, displayName: null, key: 'explicit:roost-stall-probe',
+  })]);
+  assert.equal(agent.label, 'roost-stall-probe');
+});
+
+test('an agent key keeps its session name whole, even if that name contains a colon', () => {
+  const [agent] = mapSessionsToAgents([session({
+    hasActiveRun: true, displayName: null, key: 'agent:labby:deploy:staging',
+  })]);
+  assert.equal(agent.label, 'deploy:staging');
+});
+
+test('a key with no prefix at all is used unchanged', () => {
+  const [agent] = mapSessionsToAgents([session({
+    hasActiveRun: true, displayName: null, key: 'plain-key',
+  })]);
+  assert.equal(agent.label, 'plain-key');
+});

@@ -32,17 +32,24 @@
  * A human-readable name for a session.
  *
  * `displayName` is null on every real session observed on this gateway, so the
- * key carries the only meaningful name. Keys look like
- * `agent:<agentId>:<sessionName>`; the session name is the part a human chose,
- * so it is what the panel shows. Anything not matching that shape is used whole
- * rather than mangled.
+ * key carries the only meaningful name. Two key shapes have been seen live:
+ *
+ *   agent:labby:test-101-final    a routed agent session
+ *   explicit:roost-stall-probe    one created with --session-id
+ *
+ * Both lead with routing information that means nothing to someone glancing at
+ * a 7" panel across the room. The agent shape is stripped first and by name, so
+ * a session called `deploy:staging` keeps its colon; anything else loses just
+ * one leading `prefix:`. A key with no prefix is used unchanged.
  */
 export function sessionLabel(s) {
   if (s?.displayName) return s.displayName;
   const key = s?.key;
   if (typeof key !== 'string') return null;
-  const m = /^agent:[^:]+:(.+)$/.exec(key);
-  return m ? m[1] : key;
+  const agentShape = /^agent:[^:]+:(.+)$/.exec(key);
+  if (agentShape) return agentShape[1];
+  const prefixed = /^[^:]+:(.+)$/.exec(key);
+  return prefixed ? prefixed[1] : key;
 }
 
 export function mapSessionsToAgents(sessions = []) {
