@@ -63,3 +63,35 @@ test('a session missing optional fields still maps, because the gateway is not o
   assert.equal(agent.state, 'thinking');
   assert.ok('label' in agent && 'runId' in agent && 'since' in agent && 'urgency' in agent);
 });
+
+// Real sessions on this gateway carry displayName: null and a structured key
+// like "agent:labby:test-101-final". Without a fallback the panel shows
+// "thinking" with no indication of what is being thought about.
+
+test('falls back to the session name in the key, because real sessions have no displayName', () => {
+  const [agent] = mapSessionsToAgents([session({
+    hasActiveRun: true, displayName: null, key: 'agent:labby:test-101-final',
+  })]);
+  assert.equal(agent.label, 'test-101-final');
+});
+
+test('prefers displayName when the gateway actually provides one', () => {
+  const [agent] = mapSessionsToAgents([session({
+    hasActiveRun: true, displayName: 'Deploying photopush', key: 'agent:labby:whatever',
+  })]);
+  assert.equal(agent.label, 'Deploying photopush');
+});
+
+test('uses the whole key when it is not the agent:<id>:<name> shape', () => {
+  const [agent] = mapSessionsToAgents([session({
+    hasActiveRun: true, displayName: null, key: 'some-other-key',
+  })]);
+  assert.equal(agent.label, 'some-other-key');
+});
+
+test('an idle agent still carries no label, even though a name is derivable', () => {
+  const [agent] = mapSessionsToAgents([session({
+    hasActiveRun: false, displayName: null, key: 'agent:labby:quiet',
+  })]);
+  assert.equal(agent.label, null);
+});

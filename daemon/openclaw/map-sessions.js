@@ -28,6 +28,23 @@
  * quiet, which the mock's own script calls ~95% of real runtime.
  */
 
+/**
+ * A human-readable name for a session.
+ *
+ * `displayName` is null on every real session observed on this gateway, so the
+ * key carries the only meaningful name. Keys look like
+ * `agent:<agentId>:<sessionName>`; the session name is the part a human chose,
+ * so it is what the panel shows. Anything not matching that shape is used whole
+ * rather than mangled.
+ */
+export function sessionLabel(s) {
+  if (s?.displayName) return s.displayName;
+  const key = s?.key;
+  if (typeof key !== 'string') return null;
+  const m = /^agent:[^:]+:(.+)$/.exec(key);
+  return m ? m[1] : key;
+}
+
 export function mapSessionsToAgents(sessions = []) {
   return sessions
     // An archived conversation is not an agent doing something now. This is a
@@ -40,7 +57,7 @@ export function mapSessionsToAgents(sessions = []) {
         state: working ? 'thinking' : 'idle',
         // Idle agents carry no label or run id: aggregate() ignores idle
         // agents entirely, and the mock establishes null for both.
-        label: working ? (s?.displayName ?? null) : null,
+        label: working ? sessionLabel(s) : null,
         runId: working ? (s?.activeRunIds?.[0] ?? null) : null,
         urgency: 'ambient',
         since: s?.lastActivityAt ?? s?.updatedAt ?? s?.startedAt ?? null,
