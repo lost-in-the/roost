@@ -66,7 +66,7 @@ name=$(echo "$selected" | jq -r '.[0].name')
 description=$(echo "$selected" | jq -r '.[0].description')
 width=$(echo "$selected" | jq -r '.[0].width')
 height=$(echo "$selected" | jq -r '.[0].height')
-refresh=$(echo "$selected" | jq -r '.[0].refreshRate | floor')
+refresh=$(echo "$selected" | jq -r '.[0].refreshRate | round')
 
 if [ -z "$description" ] || [ "$description" = "null" ]; then
   {
@@ -103,7 +103,9 @@ return {
   -- description-based selector is used.
   output = nil,
 
-  verified = true,
+  -- This script proves the output is PRESENT. It cannot prove the pin works,
+  -- so it never sets this. Flip it by hand once the panel renders for real.
+  verified = false,
 }
 LUA
 
