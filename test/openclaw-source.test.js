@@ -112,3 +112,40 @@ test('stop is idempotent and silences further emissions', async () => {
   assert.equal(seen.length, 1, 'no emissions after stop');
   assert.equal(gw.state.stopped, 1, 'the client is stopped exactly once');
 });
+
+test('advertises tool-events, without which the gateway silently sends no live progress', async () => {
+  const { GATEWAY_CLIENT_CAPS } = await import('@openclaw/gateway-protocol/client-info');
+  const gw = fakeGateway({ sessions: [] });
+  const source = makeSource(gw);
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+
+  // The gateway registers only connections advertising this capability as
+  // recipients for a run's structured tool events, and says nothing if you
+  // omit it. Every progress field on a session record is null or frozen while
+  // a run is active, so these events are the ONLY live progress signal.
+  assert.ok(Array.isArray(gw.state.options.caps), 'caps must be declared, not left undefined');
+  assert.ok(gw.state.options.caps.includes(GATEWAY_CLIENT_CAPS.TOOL_EVENTS),
+    `caps ${JSON.stringify(gw.state.options.caps)} is missing tool-events`);
+  source.stop();
+});
+
+test('declares only capabilities it implements, per the gateway guidance', async () => {
+  const { GATEWAY_CLIENT_CAPS } = await import('@openclaw/gateway-protocol/client-info');
+  const known = new Set(Object.values(GATEWAY_CLIENT_CAPS));
+  const gw = fakeGateway({ sessions: [] });
+  const source = makeSource(gw);
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+
+  for (const c of gw.state.options.caps) {
+    assert.ok(known.has(c), `${c} is not in the gateway's capability registry`);
+  }
+  // roost is read-only at M1: it must not claim approval capabilities it has
+  // neither the scope nor the UI to honour.
+  assert.equal(gw.state.options.caps.includes(GATEWAY_CLIENT_CAPS.APPROVALS), false);
+  assert.equal(gw.state.options.caps.includes(GATEWAY_CLIENT_CAPS.EXEC_APPROVALS), false);
+  source.stop();
+});

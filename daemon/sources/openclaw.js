@@ -1,3 +1,4 @@
+import { GATEWAY_CLIENT_CAPS } from '@openclaw/gateway-protocol/client-info';
 import { StateSource } from './state-source.js';
 import { deviceSigningDeps } from '../openclaw/ed25519.js';
 import { mapSessionsToAgents } from '../openclaw/map-sessions.js';
@@ -37,6 +38,25 @@ const SESSION_EVENTS = new Set([
 
 const READ_ONLY_SCOPES = ['operator.read'];
 
+/**
+ * Capabilities roost advertises in connect.params.caps.
+ *
+ * `tool-events` is not optional decoration. Measured on a live run: every
+ * progress field on a session record is null or frozen while the run is
+ * active — `lastActivityAt` is null, `runtimeMs` is 0, `status` is null, and
+ * `updatedAt` stays pinned at run start. A five-second run and a ten-minute
+ * hang are byte-identical in `sessions.list`.
+ *
+ * Structured tool events are therefore the ONLY live progress signal, and the
+ * gateway registers a connection as a recipient for them only if it advertises
+ * this capability. Its docs are explicit that omitting it yields silence with
+ * no handshake error — which is exactly how this was missed the first time.
+ *
+ * Nothing else is claimed. The guidance is to advertise only what the client
+ * implements, and roost at M1 has neither the scope nor the UI for approvals.
+ */
+const CAPS = [GATEWAY_CLIENT_CAPS.TOOL_EVENTS];
+
 export class OpenClawStateSource extends StateSource {
   constructor({
     createClient,
@@ -64,6 +84,7 @@ export class OpenClawStateSource extends StateSource {
       deviceIdentity: this.deviceIdentity,
       role: 'operator',
       scopes: this.scopes,
+      caps: CAPS,
       // Closed registries; see daemon/openclaw/pairing.js for why not "roost"
       // and why the mode is not "backend".
       clientName: 'gateway-client',
