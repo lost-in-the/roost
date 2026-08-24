@@ -40,9 +40,16 @@ test('an idle agent carries no label and no run id, matching the mock contract',
   assert.equal(agent.runId, null);
 });
 
-test('since comes from the session activity time, so the panel can say how long', () => {
-  const [agent] = mapSessionsToAgents([session({ hasActiveRun: true, lastActivityAt: 1_700_000_005_000 })]);
-  assert.equal(agent.since, 1_700_000_005_000);
+// REPLACED. This asserted `since` came from lastActivityAt, which encoded the
+// bug that made the panel read "thinking for 76 hours": lastActivityAt tracks
+// the last HUMAN interaction and was observed 85 hours stale on a session whose
+// updatedAt was 0.3 hours old. See the `since` block at the end of this file.
+test('a session timestamp never becomes since, however tempting the field name', () => {
+  const [agent] = mapSessionsToAgents(
+    [session({ hasActiveRun: true, lastActivityAt: 1_700_000_005_000 })],
+    undefined, new Map(), 42_000,
+  );
+  assert.equal(agent.since, 42_000);
 });
 
 test('every state produced is one aggregate can rank, so a live gateway cannot crash the daemon', () => {
@@ -146,4 +153,104 @@ test('an iPhone session key has no prefix and is left alone', () => {
     key: 'ios-342694d8-da30-4fe3-a52d-2e129eb6e0dc',
   })]);
   assert.equal(agent.label, 'ios-342694d8-da30-4fe3-a52d-2e129eb6e0dc');
+});
+
+// ── Observer digests ────────────────────────────────────────────────────────
+//
+// `sessions.list` cannot distinguish a healthy long run from a hung one: every
+// progress field is null or frozen while active. The session.observer digest is
+// the only thing that can, so when one exists it outranks the hasActiveRun read.
+
+const digest = (over = {}) => ({ headline: 'reindexing the media library', health: 'grinding', ...over });
+
+test('a stuck digest makes the agent stalled, which hasActiveRun alone can never say', () => {
+  const [agent] = mapSessionsToAgents(
+    [session({ key: 'k', hasActiveRun: true })],
+    new Map([['k', digest({ health: 'stuck' })]]),
+  );
+  assert.equal(agent.state, 'stalled');
+  assert.equal(agent.urgency, 'notify');
+});
+
+test('a waiting-on-user digest blocks, so the panel is allowed to be loud', () => {
+  const [agent] = mapSessionsToAgents(
+    [session({ key: 'k', hasActiveRun: true })],
+    new Map([['k', digest({ health: 'waiting-on-user' })]]),
+  );
+  assert.equal(agent.state, 'needs_attention');
+  assert.equal(agent.urgency, 'blocking');
+});
+
+test('the digest headline becomes the label, since it beats a scraped session key', () => {
+  const [agent] = mapSessionsToAgents(
+    [session({ key: 'agent:labby:whatever', hasActiveRun: true })],
+    new Map([['agent:labby:whatever', digest({ headline: 'deploying photopush to k3s' })]]),
+  );
+  assert.equal(agent.label, 'deploying photopush to k3s');
+});
+
+test('an unrecognised health falls back to the hasActiveRun reading rather than crashing', () => {
+  const [agent] = mapSessionsToAgents(
+    [session({ key: 'k', hasActiveRun: true })],
+    new Map([['k', digest({ health: 'teleporting' })]]),
+  );
+  assert.equal(agent.state, 'thinking');
+});
+
+test('a digest for a quiet session still applies, because done and failed are real answers', () => {
+  const [agent] = mapSessionsToAgents(
+    [session({ key: 'k', hasActiveRun: false })],
+    new Map([['k', digest({ health: 'failed', headline: 'migration aborted' })]]),
+  );
+  assert.equal(agent.state, 'needs_attention');
+  assert.equal(agent.label, 'migration aborted');
+});
+
+test('no digest map at all behaves exactly as before, so the caller may omit it', () => {
+  const [agent] = mapSessionsToAgents([session({ key: 'k', hasActiveRun: true })]);
+  assert.equal(agent.state, 'thinking');
+});
+
+// ── `since` ─────────────────────────────────────────────────────────────────
+//
+// Observed live: agent:labby:main carried lastActivityAt from 85 HOURS earlier
+// while updatedAt and startedAt were 0.3 hours old. lastActivityAt tracks the
+// last human interaction, not run activity, so reading `since` off the session
+// made the panel announce "thinking for 76 hours". The contract says `since` is
+// when the agent entered THIS state, which no gateway field expresses.
+
+test('since is when roost first saw this state, not a session timestamp', () => {
+  const agents = mapSessionsToAgents(
+    [session({ key: 'k', hasActiveRun: true, lastActivityAt: 1 })],   // 1970
+    undefined, new Map(), 5_000,
+  );
+  assert.equal(agents[0].since, 5_000, 'a 1970 timestamp must not reach the panel');
+});
+
+test('since is preserved while the state is unchanged, so elapsed keeps counting up', () => {
+  const prev = new Map([['k', { state: 'thinking', since: 1_000 }]]);
+  const agents = mapSessionsToAgents(
+    [session({ key: 'k', hasActiveRun: true })], undefined, prev, 9_000,
+  );
+  assert.equal(agents[0].since, 1_000);
+});
+
+test('since resets when the state changes, because that is a new state to time', () => {
+  const prev = new Map([['k', { state: 'idle', since: 1_000 }]]);
+  const agents = mapSessionsToAgents(
+    [session({ key: 'k', hasActiveRun: true })], undefined, prev, 9_000,
+  );
+  assert.equal(agents[0].state, 'thinking');
+  assert.equal(agents[0].since, 9_000);
+});
+
+test('a digest that changes the state also restarts the clock', () => {
+  const prev = new Map([['k', { state: 'thinking', since: 1_000 }]]);
+  const agents = mapSessionsToAgents(
+    [session({ key: 'k', hasActiveRun: true })],
+    new Map([['k', { health: 'stuck', headline: 'x' }]]),
+    prev, 9_000,
+  );
+  assert.equal(agents[0].state, 'stalled');
+  assert.equal(agents[0].since, 9_000);
 });

@@ -1,3 +1,5 @@
+import { healthToState } from './health.js';
+
 /**
  * OpenClaw sessions -> roost agent records.
  *
@@ -51,6 +53,12 @@ const ROUTING_PREFIXES = [
   /^explicit:/,      // created with --session-id
 ];
 
+/** Carry `since` forward while the state holds; restart the clock when it changes. */
+function sinceFor(previous, id, state, now) {
+  const prior = previous?.get(id);
+  return prior && prior.state === state ? prior.since : now;
+}
+
 export function sessionLabel(s) {
   if (s?.displayName) return s.displayName;
   let key = s?.key;
@@ -59,22 +67,47 @@ export function sessionLabel(s) {
   return key || s.key;
 }
 
-export function mapSessionsToAgents(sessions = []) {
+/**
+ * @param {Array} sessions        from `sessions.list`
+ * @param {Map} [digests]         sessionKey -> latest session.observer digest
+ * @param {Map} [previous]        id -> { state, since } from the last emission
+ * @param {number} [now]          injectable clock
+ *
+ * A digest OUTRANKS the hasActiveRun reading. hasActiveRun can only say whether
+ * a run exists; the observer has read the transcript and can say whether it is
+ * going anywhere. Where they disagree, the observer is better informed.
+ *
+ * `since` is tracked HERE rather than read off the session, because no gateway
+ * field means what the contract means. Observed live: agent:labby:main reported
+ * lastActivityAt from 85 hours earlier while updatedAt was 0.3 hours old —
+ * lastActivityAt follows human interaction, not run activity. Reading it made
+ * the panel announce "thinking for 76 hours". The contract wants the moment the
+ * agent entered THIS state, so roost times it from its own clock and carries it
+ * forward for as long as the state holds.
+ */
+export function mapSessionsToAgents(sessions = [], digests, previous, now = Date.now()) {
   return sessions
     // An archived conversation is not an agent doing something now. This is a
     // real flag on the record, not an arbitrary recency cutoff.
     .filter((s) => !s?.archived)
     .map((s) => {
       const working = Boolean(s?.hasActiveRun);
+      const d = digests?.get(s?.key);
+      // null when the health value is unrecognised, so a future gateway release
+      // adding an eighth value degrades to the hasActiveRun reading.
+      const judged = healthToState(d?.health);
+      const state = judged ? judged.state : (working ? 'thinking' : 'idle');
       return {
         id: s?.key ?? s?.sessionId,
-        state: working ? 'thinking' : 'idle',
+        state,
         // Idle agents carry no label or run id: aggregate() ignores idle
         // agents entirely, and the mock establishes null for both.
-        label: working ? sessionLabel(s) : null,
+        // The observer's headline is written for exactly this surface, so it
+        // beats a session key scraped for something human-readable.
+        label: d?.headline ?? (working || judged ? sessionLabel(s) : null),
         runId: working ? (s?.activeRunIds?.[0] ?? null) : null,
-        urgency: 'ambient',
-        since: s?.lastActivityAt ?? s?.updatedAt ?? s?.startedAt ?? null,
+        urgency: judged ? judged.urgency : 'ambient',
+        since: sinceFor(previous, s?.key ?? s?.sessionId, state, now),
       };
     });
 }

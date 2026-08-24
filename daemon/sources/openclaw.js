@@ -74,6 +74,13 @@ export class OpenClawStateSource extends StateSource {
     this.stopped = true;
     this.timer = null;
     this.inFlight = false;
+    /** sessionKey -> latest session.observer digest. Push-only: it cannot be
+     *  re-read from sessions.list, so it has to be held here. Pruned to the
+     *  live session set on every snapshot so it cannot grow without bound. */
+    this.digests = new Map();
+    /** id -> { state, since }. `since` means "entered this state", which no
+     *  gateway field expresses; see daemon/openclaw/map-sessions.js. */
+    this.previous = new Map();
   }
 
   start() {
@@ -93,7 +100,10 @@ export class OpenClawStateSource extends StateSource {
       hostDeps: deviceSigningDeps,
 
       onHelloOk: () => { void this.resync(); },
-      onEvent: (evt) => { if (SESSION_EVENTS.has(evt?.event)) this.schedule(); },
+      onEvent: (evt) => {
+        if (evt?.event === 'session.observer') { this.absorbDigest(evt.payload); return; }
+        if (SESSION_EVENTS.has(evt?.event)) this.schedule();
+      },
       onConnectError: (err) => this.emit('warning', `openclaw connect: ${err?.message ?? err}`),
     });
     this.client.start();
@@ -106,6 +116,11 @@ export class OpenClawStateSource extends StateSource {
       // Subscribe BEFORE snapshotting: the reverse order leaves a window where
       // a change lands after the read and before the subscription exists.
       await this.client.request('sessions.subscribe', {});
+      // Join the session.observer audience. The gateway broadcasts digests only
+      // to connections that opt in, and says nothing if you never ask — which is
+      // exactly how roost spent its first day blind to them. Audience membership
+      // is per CONNECTION, so this must be redone on every reconnect.
+      await this.client.request('sessions.observer.visibility', { visible: true });
       await this.snapshot();
     } catch (err) {
       this.emit('warning', `openclaw resync: ${err?.message ?? err}`);
@@ -118,12 +133,30 @@ export class OpenClawStateSource extends StateSource {
     try {
       const res = await this.client.request('sessions.list', {});
       if (this.stopped) return;
-      this.emit('agents', mapSessionsToAgents(res?.sessions ?? []));
+      const sessions = res?.sessions ?? [];
+
+      // Drop digests for sessions the gateway no longer lists.
+      const live = new Set(sessions.map((s) => s?.key));
+      for (const key of this.digests.keys()) if (!live.has(key)) this.digests.delete(key);
+
+      const agents = mapSessionsToAgents(sessions, this.digests, this.previous);
+      this.previous = new Map(agents.map((a) => [a.id, { state: a.state, since: a.since }]));
+      this.emit('agents', agents);
     } catch (err) {
       this.emit('warning', `openclaw sessions.list: ${err?.message ?? err}`);
     } finally {
       this.inFlight = false;
     }
+  }
+
+  /** A session.observer digest: the observer's read of how a run is going. */
+  absorbDigest(payload) {
+    const key = payload?.sessionKey;
+    if (!key || this.stopped) return;
+    this.digests.set(key, payload);
+    // Re-emit promptly: the gateway sends these with dropIfSlow, and this is
+    // the only signal that distinguishes a grinding run from a stuck one.
+    this.schedule();
   }
 
   schedule() {
@@ -138,6 +171,8 @@ export class OpenClawStateSource extends StateSource {
     this.stopped = true;
     clearTimeout(this.timer);
     this.timer = null;
+    this.digests.clear();
+    this.previous.clear();
     try { this.client?.stop(); } catch { /* stopping is best-effort */ }
   }
 }

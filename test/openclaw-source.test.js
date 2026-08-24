@@ -149,3 +149,70 @@ test('declares only capabilities it implements, per the gateway guidance', async
   assert.equal(gw.state.options.caps.includes(GATEWAY_CLIENT_CAPS.EXEC_APPROVALS), false);
   source.stop();
 });
+
+test('declares observer visibility on connect, without which no digest is ever sent to it', async () => {
+  const gw = fakeGateway({ sessions: [] });
+  const source = makeSource(gw);
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+
+  // The gateway broadcasts session.observer only to connections in the
+  // audience, and joining is opt-in. Silent, with no error, if you skip it.
+  assert.ok(gw.state.requests.includes('sessions.observer.visibility'),
+    `requests were ${JSON.stringify(gw.state.requests)}`);
+  source.stop();
+});
+
+test('re-declares visibility after a reconnect, since audience membership is per connection', async () => {
+  const gw = fakeGateway({ sessions: [] });
+  const source = makeSource(gw);
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+
+  const n = gw.state.requests.filter((m) => m === 'sessions.observer.visibility').length;
+  assert.ok(n >= 2, `visibility declared ${n} times, expected at least 2`);
+  source.stop();
+});
+
+test('an observer digest reaches the emitted agent set', async () => {
+  const gw = fakeGateway({ sessions: [sess('a', true)] });
+  const source = makeSource(gw);
+  const seen = [];
+  source.on('agents', (x) => seen.push(x));
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+
+  gw.state.options.onEvent({
+    event: 'session.observer',
+    payload: { sessionKey: 'a', health: 'stuck', headline: 'retrying a failing push' },
+  });
+  await settle();
+
+  const last = seen[seen.length - 1];
+  assert.equal(last[0].state, 'stalled');
+  assert.equal(last[0].label, 'retrying a failing push');
+  source.stop();
+});
+
+test('digests for sessions that vanish are pruned, so the map cannot grow forever', async () => {
+  const gw = fakeGateway({ sessions: [sess('a', true)] });
+  const source = makeSource(gw);
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+
+  gw.state.options.onEvent({ event: 'session.observer', payload: { sessionKey: 'a', health: 'stuck', headline: 'x' } });
+  await settle();
+  assert.equal(source.digests.size, 1);
+
+  gw.state.sessions = [sess('b', false)];          // 'a' is gone from the gateway
+  gw.state.options.onEvent({ event: 'sessions.changed', payload: {} });
+  await settle();
+  assert.equal(source.digests.has('a'), false, 'a vanished session must not keep its digest');
+  source.stop();
+});
