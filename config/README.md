@@ -90,6 +90,40 @@ driver would still show a device, so this is a cable problem.
 
 ---
 
+## ⚠ Known defect: the panel silently loses fullscreen
+
+Observed twice on 2026-08-24. The panel drops from **1024x600 to 1024x574**,
+handing 26px back to the bar's reserved area. Nothing errors; the panel just
+gets slightly smaller, which on a wall display is easy to miss for days.
+
+Re-running `./scripts/launch-panel.sh` fixes it. It is idempotent and re-places
+an existing window, so it is safe to run at any time.
+
+**What has been ruled out:**
+
+- **`hyprctl reload` is NOT the trigger.** Tested directly: fullscreen survives
+  a reload (`1024x600 fullscreen=2` before and after).
+- **The window is not being recreated.** Both occurrences kept the same window
+  address (`0x564494d87e00`), so this is one window losing state, not Chromium
+  relaunching.
+
+**What is suspected but unproven:** both occurrences were around a daemon
+restart. The renderer takes its state from MQTT over WebSocket, not from the
+daemon's HTTP server, so a restart should not disturb a loaded page — which
+makes the correlation suspicious rather than explanatory. Do not fix this until
+the trigger is actually identified.
+
+**Why it cannot self-heal today:** the `fullscreen = true` window rule does not
+apply on 0.56.2 (see below), so nothing restores it declaratively. Omarchy's
+Lua layer exposes only `hyprland.start`, `layer.opened` and `layer.closed` —
+there is no window event to hook a re-dispatch onto.
+
+**The likely home for the fix** is `ExecStartPost=` on `roost-panel.service`,
+re-running the placement after any restart. That is blocked on the same broker
+question as the rest of the systemd work.
+
+---
+
 ## Version drift — what does not work as documented on 0.56.2
 
 ### 1. `hyprctl keyword` is rejected outright
