@@ -88,3 +88,47 @@ test('the local http server binds to loopback by default', () => {
   assert.equal(cfg.http.host, '127.0.0.1');
   assert.equal(cfg.http.port, 8477);
 });
+
+// The MQTT password now comes from a provisionable cache file
+// (~/.config/roost/credentials.env) rather than from `op run`. That file can
+// legitimately be absent after an environment reset, so "username set, password
+// missing" is a real and likely state — and it used to surface only as a
+// broker-side auth rejection, which is a confusing place to learn about a
+// missing local file.
+
+test('a username without a password is refused, because the broker rejection is a confusing place to learn that', () => {
+  assert.throws(
+    () => loadConfig({ ...base, ROOST_MQTT_USER: 'roost-daemon', ROOST_MQTT_PASSWORD: '' }),
+    /credentials\.env/,
+    'the error must name the file that needs restoring',
+  );
+});
+
+test('no username and no password is still fine, since that is an anonymous broker', () => {
+  const env = { ...base };
+  delete env.ROOST_MQTT_USER;
+  delete env.ROOST_MQTT_PASSWORD;
+  assert.doesNotThrow(() => loadConfig(env));
+});
+
+test('the renderer credential is checked too, since the panel authenticates separately', () => {
+  assert.throws(
+    () => loadConfig({
+      ...base,
+      ROOST_MQTT_USER: 'roost-daemon', ROOST_MQTT_PASSWORD: 'x',
+      ROOST_MQTT_RENDERER_USER: 'roost-panel', ROOST_MQTT_RENDERER_PASSWORD: '',
+    }),
+    /credentials\.env/,
+  );
+});
+
+test('a literal op:// reference is refused, because it means op run did not resolve it', () => {
+  assert.throws(
+    () => loadConfig({
+      ...base,
+      ROOST_MQTT_USER: 'roost-daemon',
+      ROOST_MQTT_PASSWORD: 'op://Homelab/Mosquitto - roost daemon/password',
+    }),
+    /unresolved/i,
+  );
+});

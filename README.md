@@ -157,6 +157,46 @@ on 0.56.2 — there are six, and two of them required real workarounds.
 
 ---
 
+## Credentials
+
+The two broker passwords live in a **provisionable cache**, not in the repo and
+not resolved at start:
+
+```
+~/.config/roost/credentials.env      0600, outside the repo
+  ROOST_MQTT_PASSWORD=...            daemon, readwrite roost/#
+  ROOST_MQTT_RENDERER_PASSWORD=...   panel, read-only roost/#
+```
+
+**1Password remains the source of truth** — the two `Mosquitto - roost …` items
+in the Homelab vault. The cache exists so the daemon has *no 1Password
+dependency at boot*. It previously ran under `op run --env-file`, which needs an
+unlocked 1Password session; there is none at boot, so the unit restart-looped
+until someone logged in and unlocked.
+
+Restore it after any environment reset, while 1Password is unlocked:
+
+```sh
+install -d -m 700 ~/.config/roost && umask 077 && {
+  printf 'ROOST_MQTT_PASSWORD=%s\n'          "$(op read 'op://Homelab/Mosquitto - roost daemon/password')"
+  printf 'ROOST_MQTT_RENDERER_PASSWORD=%s\n' "$(op read 'op://Homelab/Mosquitto - roost panel/password')"
+} > ~/.config/roost/credentials.env
+```
+
+The values are piped, never passed as arguments, so they do not reach a process
+listing or shell history.
+
+**It must be `KEY=VALUE`.** A bare secret in a systemd `EnvironmentFile` yields
+an empty variable with no error at all. If the cache is missing or incomplete
+the daemon refuses to start and prints the command above, rather than failing
+later as a bare `not authorized` from the broker.
+
+`.env` holds the nine non-secret settings — broker host and port, both
+usernames, topic, WebSocket URL, HTTP bind, state source. The unit reads both
+files, credentials last, so the cache wins on any overlap.
+
+---
+
 ## Connecting to OpenClaw
 
 roost reads agent presence from the OpenClaw gateway as a **paired device**, not

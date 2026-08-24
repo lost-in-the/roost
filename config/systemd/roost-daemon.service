@@ -14,15 +14,35 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=%h/Work/lost-in-the/roost
 
-# Secrets are resolved at start by the 1Password CLI and handed to the daemon as
-# ordinary environment variables. No credential is stored in this unit or in the
-# repository: .env holds op:// REFERENCES, not values.
+# Configuration comes from two files, and the ORDER matters: systemd applies
+# EnvironmentFile in sequence, so the credentials file wins on any overlap.
 #
-# `op run` needs an unlocked 1Password session. If the desktop agent is not
-# available at boot, switch to a service-account token:
-#   Environment=OP_SERVICE_ACCOUNT_TOKEN=...   <- do NOT inline it; use an
-#   EnvironmentFile= pointing at a 0600 file outside the repository.
-ExecStart=/usr/bin/op run --env-file=%h/Work/lost-in-the/roost/.env -- /usr/bin/node %h/Work/lost-in-the/roost/daemon/index.js
+#   .env               nine NON-SECRET settings: broker host and port, both
+#                      usernames, the topic, the WebSocket URL, the HTTP
+#                      bind, and the state source. Gitignored, but nothing
+#                      in it is secret.
+#
+#   credentials.env    the two passwords, 0600, OUTSIDE the repository.
+#                      Must be KEY=VALUE, not a raw token — a bare secret in
+#                      an EnvironmentFile yields an empty variable silently.
+#
+# This file is a provisionable CACHE. 1Password remains the source of truth
+# (the two Mosquitto items in the Homelab vault); the cache exists so the
+# daemon has NO 1Password dependency at boot. Previously this ran under
+# `op run --env-file`, which needs an unlocked 1Password session — and there
+# is none at boot, so the unit restart-looped until someone logged in.
+#
+# Restore after an environment reset, while 1Password is unlocked:
+#   install -d -m 700 ~/.config/roost && umask 077 && {
+#     printf 'ROOST_MQTT_PASSWORD=%s\n' "$(op read 'op://Homelab/Mosquitto - roost daemon/password')";
+#     printf 'ROOST_MQTT_RENDERER_PASSWORD=%s\n' "$(op read 'op://Homelab/Mosquitto - roost panel/password')";
+#   } > ~/.config/roost/credentials.env
+#
+# If the cache is missing the daemon refuses to start and prints that command,
+# rather than failing later as a bare "not authorized" from the broker.
+EnvironmentFile=%h/Work/lost-in-the/roost/.env
+EnvironmentFile=%h/.config/roost/credentials.env
+ExecStart=/usr/bin/node %h/Work/lost-in-the/roost/daemon/index.js
 
 Restart=always
 RestartSec=5s

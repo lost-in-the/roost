@@ -24,6 +24,34 @@ const int = (value, fallback) => {
  */
 const isLoopback = (host) => ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(host);
 
+const CREDENTIALS_HINT =
+  'Restore it while 1Password is unlocked:\n' +
+  '  install -d -m 700 ~/.config/roost && umask 077 && {\n' +
+  "    printf 'ROOST_MQTT_PASSWORD=%s\\n' \"$(op read 'op://Homelab/Mosquitto - roost daemon/password')\";\n" +
+  "    printf 'ROOST_MQTT_RENDERER_PASSWORD=%s\\n' \"$(op read 'op://Homelab/Mosquitto - roost panel/password')\";\n" +
+  '  } > ~/.config/roost/credentials.env';
+
+/**
+ * The passwords come from ~/.config/roost/credentials.env, a provisionable
+ * CACHE whose source of truth is 1Password. That file can legitimately be
+ * absent after an environment reset, so a missing password is a real state and
+ * not a programming error — but it must fail HERE, naming the restore, rather
+ * than surfacing later as a bare "not authorized" from the broker.
+ */
+function requireCredential(user, password, userVar, passVar) {
+  if (!user) return;                       // anonymous broker: nothing to check
+  if (!password) {
+    throw new Error(
+      `${userVar} is set but ${passVar} is empty. It comes from ` +
+      `~/.config/roost/credentials.env, which is missing or incomplete.\n${CREDENTIALS_HINT}`);
+  }
+  if (password.startsWith('op://')) {
+    throw new Error(
+      `${passVar} is an unresolved 1Password reference (${password.split('/')[2] ?? 'op://…'}). ` +
+      'Something passed the reference through instead of the value.\n' + CREDENTIALS_HINT);
+  }
+}
+
 export function loadConfig(env = process.env) {
   const host = env.ROOST_MQTT_HOST;
   if (!host) throw new Error('ROOST_MQTT_HOST is required (see .env.example)');
@@ -42,6 +70,11 @@ export function loadConfig(env = process.env) {
       'There is no portable default: EMQX uses 8083, Mosquitto uses 9001. ' +
       'Set it explicitly, e.g. ws://mqtt.example.internal:9001/mqtt');
   }
+
+  requireCredential(env.ROOST_MQTT_USER, env.ROOST_MQTT_PASSWORD,
+    'ROOST_MQTT_USER', 'ROOST_MQTT_PASSWORD');
+  requireCredential(env.ROOST_MQTT_RENDERER_USER, env.ROOST_MQTT_RENDERER_PASSWORD,
+    'ROOST_MQTT_RENDERER_USER', 'ROOST_MQTT_RENDERER_PASSWORD');
 
   const port = int(env.ROOST_MQTT_PORT, 1883);
   const topic = env.ROOST_MQTT_TOPIC || 'roost/agents/state';
