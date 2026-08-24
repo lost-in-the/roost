@@ -17,9 +17,31 @@ const int = (value, fallback) => {
   return n;
 };
 
+/**
+ * Is this the local dev broker? `scripts/dev-broker.js` is the only thing that
+ * serves WebSocket on 8083, so the derived default below is only ever right
+ * for loopback.
+ */
+const isLoopback = (host) => ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(host);
+
 export function loadConfig(env = process.env) {
   const host = env.ROOST_MQTT_HOST;
   if (!host) throw new Error('ROOST_MQTT_HOST is required (see .env.example)');
+
+  // Refused rather than guessed, for the same reason the host is required: a
+  // wrong WebSocket URL does not error anywhere. The daemon connects happily
+  // over TCP, the panel simply never subscribes, and the display sits on its
+  // last retained message looking healthy.
+  //
+  // 8083 is the EMQX convention and what dev-broker.js serves. The real broker
+  // here is Mosquitto, whose WebSocket listener is 9001 — measured: 1883 open,
+  // 8083/9001/8080/8883/8884 all refused before the listener was added.
+  if (!isLoopback(host) && !env.ROOST_MQTT_WS_URL) {
+    throw new Error(
+      `ROOST_MQTT_WS_URL is required for a remote broker (host ${host}). ` +
+      'There is no portable default: EMQX uses 8083, Mosquitto uses 9001. ' +
+      'Set it explicitly, e.g. ws://mqtt.example.internal:9001/mqtt');
+  }
 
   const port = int(env.ROOST_MQTT_PORT, 1883);
   const topic = env.ROOST_MQTT_TOPIC || 'roost/agents/state';
@@ -61,7 +83,8 @@ export function loadConfig(env = process.env) {
     laptopLogPath: env.ROOST_LAPTOP_LOG || defaultLogPath(),
     renderer: {
       // Browsers cannot speak raw MQTT over TCP, so the panel connects over
-      // WebSocket. EMQX exposes this on 8083 by default.
+      // WebSocket. The fallback only applies to loopback, where it matches
+      // scripts/dev-broker.js; a remote host is rejected above.
       wsUrl: env.ROOST_MQTT_WS_URL || `ws://${host}:8083/mqtt`,
       topic,
       instrumentTopic,

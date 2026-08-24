@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadConfig } from '../daemon/config.js';
 
-const base = { ROOST_MQTT_HOST: 'broker.example' };
+const base = { ROOST_MQTT_HOST: 'broker.example', ROOST_MQTT_WS_URL: 'ws://broker.example:8083/mqtt' };
 
 test('the broker host is required, because guessing it would silently do nothing', () => {
   assert.throws(() => loadConfig({}), /ROOST_MQTT_HOST/);
@@ -20,8 +20,25 @@ test('the port defaults to the standard mqtt port', () => {
   assert.equal(loadConfig(base).mqtt.url, 'mqtt://broker.example:1883');
 });
 
-test('the browser websocket url is derived from the host when not given', () => {
-  assert.equal(loadConfig(base).renderer.wsUrl, 'ws://broker.example:8083/mqtt');
+// REPLACED. This asserted that a REMOTE host silently gets :8083, which is the
+// port scripts/dev-broker.js serves and nothing else. The homelab broker is
+// Mosquitto on 9001; there is no EMQX anywhere. Defaulting a remote host to
+// 8083 makes the panel fail to subscribe with no error at all.
+test('a loopback host keeps the dev-broker default, which is what dev:broker serves', () => {
+  for (const h of ['127.0.0.1', 'localhost', '::1']) {
+    assert.equal(loadConfig({ ROOST_MQTT_HOST: h }).renderer.wsUrl, `ws://${h}:8083/mqtt`);
+  }
+});
+
+test('a remote host refuses to guess the websocket port, because guessing fails silently', () => {
+  // Same reasoning as the required broker host above: a wrong URL here does not
+  // error, it just leaves the panel permanently unsubscribed.
+  assert.throws(() => loadConfig({ ROOST_MQTT_HOST: 'broker.example' }), /ROOST_MQTT_WS_URL/);
+});
+
+test('a remote host is fine once the websocket url is given', () => {
+  const cfg = loadConfig({ ROOST_MQTT_HOST: 'mqtt.example.internal', ROOST_MQTT_WS_URL: 'ws://mqtt.example.internal:9001/mqtt' });
+  assert.equal(cfg.renderer.wsUrl, 'ws://mqtt.example.internal:9001/mqtt');
 });
 
 test('an explicit websocket url wins, since brokers put it anywhere', () => {
