@@ -6,7 +6,7 @@ const sess = (key, active) => ({ key, displayName: key, hasActiveRun: active, ar
 
 /** Fake GatewayClient: records requests, lets the test drive callbacks. */
 function fakeGateway({ sessions = [] } = {}) {
-  const state = { requests: [], options: null, started: 0, stopped: 0, sessions };
+  const state = { requests: [], requestParams: [], options: null, started: 0, stopped: 0, sessions };
   const create = (options) => {
     state.options = options;
     return {
@@ -14,6 +14,7 @@ function fakeGateway({ sessions = [] } = {}) {
       stop() { state.stopped += 1; },
       request(method, params) {
         state.requests.push(method);
+        state.requestParams.push({ method, params });
         if (method === 'sessions.list') return Promise.resolve({ sessions: state.sessions, count: state.sessions.length });
         return Promise.resolve({});
       },
@@ -214,5 +215,22 @@ test('digests for sessions that vanish are pruned, so the map cannot grow foreve
   gw.state.options.onEvent({ event: 'sessions.changed', payload: {} });
   await settle();
   assert.equal(source.digests.has('a'), false, 'a vanished session must not keep its digest');
+  source.stop();
+});
+
+test('declares itself a viewer of the live sessions, because the audience is per session', async () => {
+  const gw = fakeGateway({ sessions: [sess('a', true), sess('b', false)] });
+  const source = makeSource(gw);
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+
+  // session.observer is broadcast to audience.recipients(sessionKey, agentId),
+  // not to every subscriber. observer.visibility is a global opt-in; viewers.set
+  // is what names the sessions. Declaring only the former yields silence.
+  assert.ok(gw.state.requests.includes('sessions.viewers.set'),
+    `requests were ${JSON.stringify(gw.state.requests)}`);
+  const call = gw.state.requestParams.find((r) => r.method === 'sessions.viewers.set');
+  assert.deepEqual(call.params.sessionKeys, ['a', 'b'], 'must name every live session');
   source.stop();
 });

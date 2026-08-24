@@ -139,6 +139,15 @@ export class OpenClawStateSource extends StateSource {
       const live = new Set(sessions.map((s) => s?.key));
       for (const key of this.digests.keys()) if (!live.has(key)) this.digests.delete(key);
 
+      // Join the per-session observer audience. `sessions.observer.visibility`
+      // is a global opt-in; the broadcast targets
+      // audience.recipients(sessionKey, agentId), so the gateway also has to be
+      // told WHICH sessions this connection is viewing. Declaring only the
+      // global flag produced silence across a real run.
+      const keys = sessions.map((s) => s?.key).filter(Boolean);
+      try { await this.client.request('sessions.viewers.set', { sessionKeys: keys }); }
+      catch (err) { this.emit('warning', `openclaw viewers.set: ${err?.message ?? err}`); }
+
       const agents = mapSessionsToAgents(sessions, this.digests, this.previous);
       this.previous = new Map(agents.map((a) => [a.id, { state: a.state, since: a.since }]));
       this.emit('agents', agents);
@@ -153,6 +162,12 @@ export class OpenClawStateSource extends StateSource {
   absorbDigest(payload) {
     const key = payload?.sessionKey;
     if (!key || this.stopped) return;
+    // A real digest has never been captured; the mapping is built from the
+    // gateway's ModelDigestSchema. ROOST_OPENCLAW_DEBUG=1 dumps the first ones
+    // so the shape can be confirmed against a live run rather than assumed.
+    if (process.env.ROOST_OPENCLAW_DEBUG) {
+      console.error('[roost] session.observer digest: ' + JSON.stringify(payload));
+    }
     this.digests.set(key, payload);
     // Re-emit promptly: the gateway sends these with dropIfSlow, and this is
     // the only signal that distinguishes a grinding run from a stuck one.
