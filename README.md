@@ -36,7 +36,7 @@ all out of scope.
 | Physical panel | connected and live, 1024×600 on `HDMI-A-1` |
 | OpenClaw integration | working, paired device scoped `operator.read` |
 | `stalled` detection | **not mapped yet** — see [`docs/DECISIONS.md`](docs/DECISIONS.md) D-001 |
-| **Touch** | **no touchscreen is attached** — see below |
+| Touch | working — bound to the panel output, see [`config/hypr/roost.lua`](config/hypr/roost.lua) |
 
 M1 is complete. The daemon reads real agent presence from the OpenClaw gateway
 and the panel tracks live runs, verified during an actual chat: `idle →
@@ -44,11 +44,15 @@ thinking → idle` in step with the conversation turns, event-driven rather than
 polled. `MockStateSource` remains the default and drives the full state loop
 with no gateway, no broker and no panel hardware.
 
-**The panel has no touch input.** The kernel sees no touch controller and the
-USB tree has none: these panels carry video on HDMI and touch on a separate USB
-lead, and nothing has enumerated. The only touch device present is Sunshine's
-virtual `Touch passthrough`, which is not the panel. This blocks M2 (touch
-approvals) until the cable is connected.
+**Touch works.** It needed two things: the USB touch lead connected (video and
+touch are separate cables on these panels), and the touch device bound to the
+panel's output. Without that binding Hyprland scales normalised touch
+coordinates onto whichever monitor has *focus*, so taps landed on the desktop
+instead. `config/hypr/roost.lua` section 1b explains the mechanism.
+
+Note there are two touch devices on this machine: `waveshare-ws170120` is the
+panel, and `touch-passthrough` is Sunshine's virtual device for remote input.
+Only the first is bound; the second must keep targeting `sunshine-vd`.
 
 ---
 

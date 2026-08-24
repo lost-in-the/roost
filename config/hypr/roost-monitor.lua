@@ -9,12 +9,18 @@
 -- or read it straight off Hyprland:
 --     hyprctl monitors -j | jq -r '.[] | "\(.name)  \(.width)x\(.height)  \(.description)"'
 --
--- Discovered on connector HDMI-A-1 at 2026-08-23T00:55:00Z.
+-- Discovered on connector HDMI-A-1 at 2026-08-24T17:40:44Z.
 return {
   description = "Lenovo Group Limited LEN L1950wD B3432845",
 
   mode = "1024x600@60",
-  position = "auto",
+
+  -- The output's ACTUAL position, not "auto". With auto, enumeration order
+  -- decides the layout: measured on this machine, a reload could swap this
+  -- panel and the Sunshine virtual output (panel to 1920x0, sunshine-vd to
+  -- 0x0). Sunshine maps absolute input against a fixed layout, so that
+  -- confined the remote pointer to part of the stream. Both sides are pinned.
+  position = "0x0",
   scale = 1,
 
   -- Escape hatch: a raw connector name, used ONLY for outputs that report no
@@ -22,9 +28,6 @@ return {
   -- description-based selector is used.
   output = nil,
 
-  -- derive-monitor.sh only proves the output is PRESENT, so it always writes
-  -- false. Flipped by hand on 2026-08-23: the panel was pinned, the `roost`
-  -- workspace bound to it, and the renderer placed fullscreen at 1024x600 on
-  -- the real glass. Re-running derive-monitor.sh resets this to false.
+  -- Flipped by hand; derive-monitor.sh always writes false.
   verified = true,
 }

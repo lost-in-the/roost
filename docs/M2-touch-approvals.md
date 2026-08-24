@@ -14,30 +14,29 @@ M1 made agent activity *visible*, M2 makes the common case *answerable*.
 
 ---
 
-## ⚠ BLOCKED 2026-08-23 — there is no touchscreen attached
+## ✅ UNBLOCKED 2026-08-24 — touch works
 
-The panel is connected and rendering, but **only video is connected**. The
-kernel sees no touch controller at all:
+The blocker recorded here on 2026-08-23 is resolved. It was two problems, and
+only the first was the one originally diagnosed:
 
-- `/proc/bus/input/devices` lists a Razer mouse, an Apple keyboard, a Stream
-  Deck, power buttons and audio. No touch device.
-- The USB tree has no touch controller either.
-- The one touch-looking device, `Touch passthrough`
-  (`Vendor=beef Product=dead`, `/devices/virtual/input/`), is **Sunshine's
-  virtual input for Moonlight**. It is not the panel, and it will happily
-  mislead anyone who greps for "touch".
+1. **The USB touch lead was not connected.** These panels carry video on HDMI
+   and touch on a separate USB cable. Connecting it made
+   `WaveShare WS170120` (USB `0eef:0005`) appear.
+2. **Touch was not bound to the panel's output**, which is the part that would
+   have wasted a day if the cable had been the only fix. Hyprland scales
+   normalised touch coordinates onto whichever monitor has FOCUS, so with the
+   cable connected but no binding, taps still landed on `sunshine-vd` —
+   measured at 2127,613 for a tap on the centre of the glass. Fixed in
+   `config/hypr/roost.lua` section 1b, per-device so Sunshine's virtual
+   `touch-passthrough` keeps targeting `sunshine-vd`.
 
-These panels carry video on HDMI and touch on a **separate USB lead**, and
-nothing has enumerated on USB since boot. A missing driver would still show a
-device, so this is a cable, not software.
+Verified end to end: three taps on the `lc-corner` button drove the counter
+0→1→2→3 through `POST /api/laptop-open`. **So the tap path in §3 is proven on
+real glass**, which was the part of this design that could not be tested before.
 
-**Nothing in §3 to §6 is invalidated.** The gateway dependency in §6 is resolved
-and roost is already paired. But the tap itself cannot be tested until that lead
-is connected, so the display half should be built and driven from the mock
-exactly as M1 was — including the two-button prompt, which can be exercised with
-a pointer.
-
-§6's resolution note below is still accurate and still the thing to read first.
+§6's gateway dependency is also resolved: roost is paired and reading live agent
+state. What M2 still needs is the approvals scope (`operator.approvals`), which
+raises a fresh pairing request rather than silently widening the existing token.
 
 ---
 
@@ -52,7 +51,7 @@ More than you might expect. The contract was designed with this in mind.
 | `urgency: blocking` | Already separates "needs a decision from you" from "worth a glance". |
 | The daemon's loopback HTTP server | A return path already exists and is already trusted. See §3. |
 | `data-stale` on the renderer root | Free kill switch for the buttons. See §4.4 — this one matters more than it looks. |
-| 1024×600 glass | Two ~480×220 targets. Enormous. ⚠ But see the blocker above: **touch is not connected**, so the hardware IS currently the constraint. |
+| 1024×600 touch glass | Two ~480×220 targets. Enormous. Touch is connected and bound; the tap path is verified end to end. |
 
 **The panel is the easy half.** Everything hard is in §3 to §6.
 

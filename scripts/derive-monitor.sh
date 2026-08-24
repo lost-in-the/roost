@@ -67,6 +67,8 @@ description=$(echo "$selected" | jq -r '.[0].description')
 width=$(echo "$selected" | jq -r '.[0].width')
 height=$(echo "$selected" | jq -r '.[0].height')
 refresh=$(echo "$selected" | jq -r '.[0].refreshRate | round')
+pos_x=$(echo "$selected" | jq -r '.[0].x // 0')
+pos_y=$(echo "$selected" | jq -r '.[0].y // 0')
 
 if [ -z "$description" ] || [ "$description" = "null" ]; then
   {
@@ -95,7 +97,13 @@ return {
   description = "${description}",
 
   mode = "${width}x${height}@${refresh}",
-  position = "auto",
+
+  -- The output's ACTUAL position, not "auto". With auto, enumeration order
+  -- decides the layout: measured on this machine, a reload could swap this
+  -- panel and the Sunshine virtual output (panel to 1920x0, sunshine-vd to
+  -- 0x0). Sunshine maps absolute input against a fixed layout, so that
+  -- confined the remote pointer to part of the stream. Both sides are pinned.
+  position = "${pos_x}x${pos_y}",
   scale = 1,
 
   -- Escape hatch: a raw connector name, used ONLY for outputs that report no

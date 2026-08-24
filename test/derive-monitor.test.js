@@ -61,3 +61,27 @@ test('a 59.4 Hz panel rounds down to 59, so rounding is used rather than always 
 test('the generated file never claims verification, because finding the output proves presence and not that pinning works', () => {
   assert.match(runDerive(panel(59.821)), /verified = false/);
 });
+
+// position = "auto" lets ENUMERATION ORDER decide the layout. Measured on this
+// machine: with both the panel and sunshine-vd on "auto", a hyprctl reload could
+// swap their x-offsets (panel to 1920x0, sunshine-vd to 0x0). Sunshine's
+// absolute input mapping assumes a fixed layout, so the remote pointer got
+// confined to part of the stream. Both sides are now pinned by hand; re-running
+// this script must not undo that.
+
+test('records the actual position, because auto lets enumeration order decide the layout', () => {
+  const out = runDerive([{
+    name: 'HDMI-A-1', description: 'Some Panel', width: 1024, height: 600,
+    refreshRate: 59.821, x: 0, y: 0,
+  }]);
+  assert.match(out, /position = "0x0"/);
+  assert.doesNotMatch(out, /position = "auto"/);
+});
+
+test('a non-origin position is preserved verbatim', () => {
+  const out = runDerive([{
+    name: 'DP-2', description: 'Some Panel', width: 1024, height: 600,
+    refreshRate: 60, x: 1920, y: 0,
+  }]);
+  assert.match(out, /position = "1920x0"/);
+});

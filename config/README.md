@@ -81,46 +81,66 @@ It also advertises 1920x1080, 1440x900 and 1280x720. **The hardware refuses to
 sync any of them.** All three were set on the live output and it stayed at
 1024x600 every time. Do not build a fallback around those modes.
 
-⚠ **There is no touch input.** `/proc/bus/input/devices` shows no touch
-controller and the USB tree has none. The only touch device on the machine is
-`Touch passthrough` (`Vendor=beef Product=dead`, `/devices/virtual/input/`),
-which is Sunshine's virtual input for Moonlight. These panels carry video on
-HDMI and touch on a separate USB lead; that lead has never enumerated. A missing
-driver would still show a device, so this is a cable problem.
+**Touch works as of 2026-08-24.** It needed the separate USB touch lead
+connected (`WaveShare WS170120`, USB `0eef:0005`) AND a per-device output
+binding in `roost.lua` section 1b. Without the binding Hyprland scales
+normalised touch coordinates onto the FOCUSED monitor, so taps landed on
+`sunshine-vd` — measured at 2127,613 for a tap on the centre of the glass.
+
+Two touch devices exist here and they are easy to confuse:
+
+| Device | What it is |
+|---|---|
+| `waveshare-ws170120` | the panel. Bound to the panel output. |
+| `touch-passthrough` | Sunshine's virtual device (`Vendor=beef Product=dead`, `/devices/virtual/input/`). Must keep targeting `sunshine-vd`. |
+
+That second one is why the binding is per-device rather than the global
+`input:touchdevice:output` — a global would capture Sunshine's device too.
 
 ---
 
 ## ⚠ Known defect: the panel silently loses fullscreen
 
-Observed twice on 2026-08-24. The panel drops from **1024x600 to 1024x574**,
-handing 26px back to the bar's reserved area. Nothing errors; the panel just
-gets slightly smaller, which on a wall display is easy to miss for days.
+The panel drops out of fullscreen and gives 26px back to the bar (1024x600 ->
+1024x574). Nothing errors, so on a wall display it can go unnoticed for days.
 
-Re-running `./scripts/launch-panel.sh` fixes it. It is idempotent and re-places
-an existing window, so it is safe to run at any time.
+Workaround, idempotent and safe at any time: `./scripts/launch-panel.sh`
 
-**What has been ruled out:**
+**The cause, caught by instrumenting the window geometry (2026-08-24):**
 
-- **`hyprctl reload` is NOT the trigger.** Tested directly: fullscreen survives
-  a reload (`1024x600 fullscreen=2` before and after).
-- **The window is not being recreated.** Both occurrences kept the same window
-  address (`0x564494d87e00`), so this is one window losing state, not Chromium
-  relaunching.
+```
+15:19:24  1024x600   fs=2   placed
+15:55:13  1920x1080  fs=2   <- took sunshine-vd's size
+15:55:18  1024x600   fs=2
+15:57:43  1920x1080  fs=2   <- again
+15:57:53  1024x600   fs=2
+16:30:51   512x574   fs=0   <- fullscreen lost, HALF width
+17:17:41  1024x574   fs=0
+```
 
-**What is suspected but unproven:** both occurrences were around a daemon
-restart. The renderer takes its state from MQTT over WebSocket, not from the
-daemon's HTTP server, so a restart should not disturb a loaded page — which
-makes the correlation suspicious rather than explanatory. Do not fix this until
-the trigger is actually identified.
+**512x574 is half of 1024: that is a TILED window.** A second window opened on
+the `roost` workspace, Hyprland split the space between them, and fullscreen was
+lost in the process. When the other window went away the panel was left at full
+width but no longer fullscreen.
 
-**Why it cannot self-heal today:** the `fullscreen = true` window rule does not
-apply on 0.56.2 (see below), so nothing restores it declaratively. Omarchy's
-Lua layer exposes only `hyprland.start`, `layer.opened` and `layer.closed` —
-there is no window event to hook a re-dispatch onto.
+`roost.lua` pins the panel *to* this workspace, but nothing keeps other windows
+*out* of it. That is the gap.
 
-**The likely home for the fix** is `ExecStartPost=` on `roost-panel.service`,
-re-running the placement after any restart. That is blocked on the same broker
-question as the rest of the systemd work.
+The 1920x1080 entries are a separate issue and are the monitor-offset swap that
+`position = "auto"` used to cause; both outputs are now pinned to explicit
+positions, and `derive-monitor.sh` emits an explicit position so a re-derive
+cannot reintroduce it.
+
+**Ruled out by direct test, so do not re-investigate these:**
+
+- A daemon restart is NOT the trigger, despite an earlier note here saying so.
+- `hyprctl reload` alone does not do it; fullscreen survived a reload under test.
+- Chromium is not relaunching; the window keeps the same address throughout.
+
+**Not fixed yet.** The real fix is keeping other windows off the workspace
+rather than re-asserting fullscreen afterwards, and it needs to be chosen
+carefully: the workspace is `special:roost`-adjacent and the wrong rule could
+strand a window with nowhere to go.
 
 ---
 
