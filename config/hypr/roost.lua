@@ -33,6 +33,54 @@ hl.monitor({
   scale = panel.scale,
 })
 
+-- 1b. Touch input ----------------------------------------------------------
+--
+-- The panel is a touchscreen. Hyprland does NOT route touch to the monitor the
+-- glass physically belongs to unless it is told to. Touch.cpp (0.56.2) does:
+--
+--     PMONITOR     = query().name(boundOutput).run() or focused_monitor
+--     TOUCH_COORDS = PMONITOR.position + (pos * PMONITOR.size)
+--
+-- Touch positions arrive normalized 0.0-1.0, so with no binding they are scaled
+-- onto whatever monitor happens to be FOCUSED. Measured here before the fix:
+-- a touch near the centre of the glass put the cursor at 2127,613 -- the centre
+-- of `sunshine-vd`, not this panel. On a single-monitor machine (the Pi this
+-- panel came from) the fallback is accidentally correct, which is why the panel
+-- appeared to "work fine" there and dead here.
+--
+-- WHY PER-DEVICE, not the global `input:touchdevice:output`:
+--   * The global defaults to "[[Auto]]", but the autodetect branch in
+--     InputManager.cpp is commented out (FIXME upstream), so Auto binds nothing.
+--   * A global would also capture Sunshine's virtual `touch-passthrough`
+--     device, which must keep targeting sunshine-vd.
+--
+-- WARN: `output` MUST be a connector name. MonitorQueryCore.cpp matches it with
+-- `*m_name != m->name()`, an exact compare against the connector, so the
+-- `desc:` selector used for MONITOR above is silently ignored here. The
+-- description stays the source of truth and is resolved to a connector below.
+--
+-- Device name is Hyprland's, from `hyprctl devices` -> Touch.
+local TOUCH_DEVICE = "waveshare-ws170120"
+
+-- Used only when the description cannot be resolved: at COLD BOOT the config is
+-- parsed before outputs are enumerated, so hl.get_monitors() is empty and there
+-- is nothing to match against. Any later `hyprctl reload` re-resolves properly
+-- and corrects this if the connector has moved.
+local TOUCH_CONNECTOR_FALLBACK = "HDMI-A-1"
+
+local function connector_for(description)
+  for _, m in ipairs(hl.get_monitors()) do
+    if m.description == description then
+      return m.name
+    end
+  end
+end
+
+hl.device({
+  name = TOUCH_DEVICE,
+  output = panel.output or connector_for(panel.description) or TOUCH_CONNECTOR_FALLBACK,
+})
+
 -- 2. A named workspace bound to that output --------------------------------
 --
 -- `persistent` keeps it alive with no windows on it, so the panel monitor is
