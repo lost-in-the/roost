@@ -259,8 +259,17 @@ with whatever scopes the device file records.
 > answer any pending approval on the gateway, and the daemon's loopback HTTP
 > server becomes the thing standing in front of that authority.
 >
-> Do not grant this scope until the daemon refuses to serve an approval route on
-> a non-loopback `ROOST_HTTP_HOST`. That guard is M2 work and is not built yet.
+> **The daemon now enforces this itself.** Holding `operator.approvals` (or
+> `operator.admin`, which satisfies it) with a non-loopback `ROOST_HTTP_HOST` is
+> refused at startup, before anything listens — see `daemon/approval-exposure.js`.
+> The check is the *combination*, not the approval route, so it fires the moment
+> the scope is granted rather than waiting for M2's route to be written and for
+> whoever writes it to remember to attach a guard.
+>
+> If it refuses, the message names both ways out: bind back to loopback, or
+> re-pair with `--scopes operator.read` and drop the authority. Exposing the HTTP
+> server is still allowed on its own — it only becomes a refusal once approval
+> authority is sitting behind it.
 
 roost subscribes rather than polls. Nothing is queued for a disconnected client,
 so every reconnect re-subscribes and takes a fresh full snapshot.

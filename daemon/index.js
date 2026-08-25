@@ -7,6 +7,8 @@ import { LaptopLog } from './laptop-log.js';
 import { instrumentPayload } from './instrument.js';
 import { MockStateSource, SCRIPTS } from './sources/mock.js';
 import { createOpenClawSource, resolveDeviceFile } from './openclaw/connect.js';
+import { readDeviceToken } from './openclaw/device-identity.js';
+import { assertApprovalsNotExposed } from './approval-exposure.js';
 
 /**
  * The roost state daemon.
@@ -35,6 +37,20 @@ function buildSource(config) {
 async function main() {
   const config = loadConfig();
   log(`topic=${config.mqtt.topic} broker=${config.mqtt.host}:${config.mqtt.port} source=${config.source}`);
+
+  // Before ANYTHING listens. The scopes live in the device file rather than the
+  // environment, so this cannot fold into loadConfig(), and it has to run ahead
+  // of startHttpServer() below — a check after listen() would leave the port
+  // open on every interface for the moments before the process exits.
+  //
+  // Only the openclaw source reaches the gateway, so only it can carry the
+  // authority the guard exists to contain. An unpaired roost reads as no scopes
+  // and is let through here; buildSource() is what reports that, with the
+  // pairing instructions.
+  if (config.source === 'openclaw') {
+    const stored = readDeviceToken(resolveDeviceFile());
+    assertApprovalsNotExposed({ host: config.http.host, scopes: stored?.scopes ?? [] });
+  }
 
   // The current full agent set. Aggregation is a pure function of this.
   let agents = [];
