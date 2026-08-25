@@ -48,7 +48,7 @@ test('an absent or empty host is treated as exposed, because node binds everythi
 });
 
 test('a routable address is not loopback', () => {
-  for (const h of ['192.168.1.10', '10.0.0.5', 'roost.local', '203.0.113.7']) {
+  for (const h of ['198.51.100.9', '10.0.0.5', 'roost.local', '203.0.113.7']) {
     assert.equal(isLoopbackHost(h), false);
   }
 });
@@ -112,14 +112,14 @@ test('approvals on an exposed bind is refused', () => {
 test('the refusal names both ways out, not just one', () => {
   // Naming only the bind fix would push someone holding the scope for a reason
   // toward giving up the guard instead of giving up the scope.
-  const problem = approvalExposureError({ host: '192.168.1.10', scopes: APPROVALS });
+  const problem = approvalExposureError({ host: '198.51.100.9', scopes: APPROVALS });
   assert.match(problem, /ROOST_HTTP_HOST/, 'names the variable to change');
   assert.match(problem, /127\.0\.0\.1/, 'names the safe value');
   assert.match(problem, /--scopes operator\.read/, 'names the way to drop the scope instead');
 });
 
 test('the refusal quotes the offending host, so the message is actionable', () => {
-  assert.match(approvalExposureError({ host: '192.168.1.10', scopes: APPROVALS }), /192\.168\.1\.10/);
+  assert.match(approvalExposureError({ host: '198.51.100.9', scopes: APPROVALS }), /198\.51\.100\.9/);
 });
 
 test('operator.admin on an exposed bind is refused too', () => {
