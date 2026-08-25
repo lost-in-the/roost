@@ -313,6 +313,10 @@ the same reason it was in M1.
 - Let the renderer decide whether something is reversible. §4.1.
 - Give the browser a broker credential that can publish. §3.
 - Allow approvals while the panel is stale. §4.4.
+- Serve an approval route from a non-loopback `ROOST_HTTP_HOST`. Already enforced
+  at startup by `daemon/approval-exposure.js`, which refuses the scope-plus-bind
+  combination before anything listens — so the route does not need its own check,
+  but do not weaken that guard to make a remote panel work.
 - Modify or migrate the Stream Deck integration. It keeps running unchanged.
 
 ## 9. Definition of done, when it is built
