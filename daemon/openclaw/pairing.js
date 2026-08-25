@@ -18,11 +18,17 @@
  *
  * The shared gateway token is used ONCE, here. Everything afterwards uses the minted
  * device token, which is scoped and independently revocable.
+ *
+ * This same flow performs a SCOPE UPGRADE. Reconnecting the existing device
+ * identity with a wider `scopes` set raises another PAIRING_REQUIRED and a
+ * fresh request id, because per docs/gateway/clients.md "Scope or role
+ * upgrades create a new pending pairing request." Reusing the identity is what
+ * makes it an upgrade rather than a second device: a new keypair would orphan
+ * the approved pairing and leave a stale entry behind on the gateway.
  */
 
 import { deviceSigningDeps } from './ed25519.js';
-
-const READ_ONLY_SCOPES = ['operator.read'];
+import { READ_ONLY_SCOPES } from './scopes.js';
 
 export function pairDevice({
   createClient,
