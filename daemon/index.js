@@ -94,8 +94,13 @@ async function main() {
   const source = buildSource(config);
   source.on('agents', (next) => {
     agents = next;
-    const payload = aggregate(agents);
-    log(`state=${payload.state} count=${payload.count} urgency=${payload.urgency} label=${JSON.stringify(payload.label)}`);
+    // onWarn only here, not in buildPayload. aggregate() fails closed on a
+    // malformed prompt, and failing closed quietly is the actual hazard — but
+    // this handler runs once per change whereas buildPayload also runs on every
+    // heartbeat, which would turn one bad prompt into a line every 10 seconds.
+    // Every change passes through here first, so nothing is missed.
+    const payload = aggregate(agents, { onWarn: (msg) => log(`WARNING ${msg}`) });
+    log(`state=${payload.state} count=${payload.count} urgency=${payload.urgency} prompt=${payload.prompt?.id ?? 'none'} label=${JSON.stringify(payload.label)}`);
     publisher.touch();
   });
 

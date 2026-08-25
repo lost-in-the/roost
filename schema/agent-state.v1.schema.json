@@ -45,6 +45,32 @@
       "type": ["string", "null"],
       "format": "date-time",
       "description": "When the winning agent entered its current state. Additive to v1. Elapsed time is derived from this, NOT from 'ts', which is publication time and would reset on every heartbeat. Null when nothing is running. Renderers predating this field ignore it and fall back to their own first-seen time."
+    },
+    "prompt": {
+      "type": ["object", "null"],
+      "required": ["id", "kind", "reversible"],
+      "additionalProperties": true,
+      "description": "An open question from the agent named by 'primary_run_id', answerable from a surface that supports it. Additive to v1. NULL means the daemon supports prompts and there is none; ABSENT means the daemon predates the field. A renderer that does not understand this field shows 'needs_attention' with no buttons, which is the correct fallback: it says something needs you and sends you to a laptop.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identifies the QUESTION, not the run. Distinct from 'primary_run_id' because one run can ask several questions in sequence, so answering has to name the question. An answer for an id the daemon has already resolved must be rejected by the daemon, never by the browser."
+        },
+        "kind": {
+          "enum": ["approve_reject"],
+          "description": "What controls to draw. M2 ships 'approve_reject' only; the field exists so later kinds need no contract change. A renderer MUST treat an unknown kind as no prompt rather than guessing at controls."
+        },
+        "reversible": {
+          "type": "boolean",
+          "description": "Whether one tap is enough. False requires a deliberate second confirm. ASSERTED BY THE DAEMON: a renderer must never infer this from the label text, because a renderer that infers it will eventually infer it wrong and silently one-tap something destructive."
+        },
+        "expires_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "When this question dies on its own. The independent backstop for a panel that stops hearing from the daemon: past this the panel dims the buttons with no new message required. The daemon also drops an expired prompt at aggregation, so the two mechanisms cover different failures. Null means no expiry was supplied."
+        }
+      }
     }
   },
 
@@ -57,7 +83,24 @@
       "label": "Deploying photopush to k3s",
       "urgency": "ambient",
       "primary_run_id": "abc123",
-      "since": "2026-08-21T17:45:56Z"
+      "since": "2026-08-21T17:45:56Z",
+      "prompt": null
+    },
+    {
+      "v": 1,
+      "ts": "2026-08-21T18:04:11Z",
+      "state": "needs_attention",
+      "count": 1,
+      "label": "Approve deploy photopush to staging?",
+      "urgency": "blocking",
+      "primary_run_id": "run-1d7e",
+      "since": "2026-08-21T18:04:02Z",
+      "prompt": {
+        "id": "prm_8f2a",
+        "kind": "approve_reject",
+        "reversible": true,
+        "expires_at": "2026-08-21T18:09:02Z"
+      }
     },
     {
       "v": 1,

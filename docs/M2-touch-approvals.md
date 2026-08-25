@@ -1,9 +1,19 @@
 # M2 — Touch approvals: design note
 
-**Status:** design only, nothing built. Written 2026-08-21, immediately after M1
-shipped, while the reasoning was fresh. **Blocked on hardware as of 2026-08-23 —
-see the blocker below.** The §6 gateway dependency is resolved; roost is paired
-and reading live agent state.
+**Status:** building. Written 2026-08-21, immediately after M1 shipped, while the
+reasoning was fresh; the 2026-08-23 hardware blocker is resolved, and so is the
+§6 gateway dependency — roost is paired and reading live agent state.
+
+Built so far, in the order §8 required:
+
+- **The bind-address guard** (2026-08-25). `daemon/approval-exposure.js`. Refuses
+  to start when roost holds `operator.approvals` on a non-loopback bind.
+- **The `prompt` contract field** (2026-08-25). §5 below, in `aggregate.js`, the
+  schema, and the mock's demo loop.
+
+Not built yet: the return path (§3), the renderer's buttons, and the §2 handoff
+rule. Nothing on the panel draws a button today; a `prompt` in the payload is
+currently a field only the schema and the tests observe.
 
 **Goal:** answer an agent's approve/reject prompt from the panel, without
 opening a laptop. That is the second half of the project's success metric —
@@ -179,10 +189,26 @@ small.
 
 ---
 
-## 5. Contract changes
+## 5. Contract changes — ✅ built 2026-08-25
 
 Additive, so `v` stays **1**. Renderers are already required to tolerate unknown
 fields.
+
+Producer is `daemon/aggregate.js`, as with every other field; the schema is
+`schema/agent-state.v1.schema.json` and the reasoning is in
+`schema/CHANGELOG.md`. Two things settled during the build that this design note
+did not specify:
+
+- **`null` is not the same as absent.** Null means this daemon supports prompts
+  and there is none; absent means the daemon predates the field. Only the first
+  means buttons are ever possible, so a renderer that cannot tell them apart has
+  to guess about its own capabilities.
+- **A malformed or expired prompt is dropped, not thrown.** `aggregate.js` throws
+  on an unrankable `state`, because a wrong state actively misleads. A prompt is
+  different: dropping it lands on the documented degradation below, whereas
+  throwing would take the entire state feed down over one bad approval — strictly
+  worse and no safer. Every drop is logged, since failing closed *quietly* is the
+  real hazard.
 
 ```json
 {
