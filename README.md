@@ -225,6 +225,43 @@ The token is **not** kept in a password manager. It is useless without the local
 private key, so a vault would hold half a credential; recovery is re-pairing,
 which is the one command above.
 
+### Widening the scope later
+
+M2 (touch approvals) needs `operator.approvals` on top of the read scope. Ask
+for it with `--scopes`:
+
+```sh
+sudo -n cat /var/lib/labby/credentials/gateway-token \
+  | node scripts/pair-openclaw.mjs --scopes operator.read,operator.approvals
+```
+
+Run against an already-paired roost this is a **scope upgrade, not a re-pair**.
+The Ed25519 identity is reused, so roost stays the same device and the existing
+pairing is not orphaned. The gateway raises a new request id that a human must
+approve — a scope upgrade can never widen a token silently.
+
+Two things it will not do:
+
+- **It never records a scope it was not granted.** An approver can grant less
+  than was asked for; roost stores what `hello-ok` negotiated and prints what
+  was withheld.
+- **It never drops a scope you already hold.** The connect frame requests the
+  union, because the gateway negotiates exactly what it is asked for and a bare
+  `--scopes operator.approvals` would cost roost its `operator.read`.
+
+The daemon picks the change up on its own: `daemon/openclaw/connect.js` connects
+with whatever scopes the device file records.
+
+> **Scope is authority, and it is broader than roost.** On OpenClaw
+> 2026.7.2-beta.7, an approval carrying no explicit reviewer device list is
+> answerable by *any* paired device holding `operator.approvals` — not only by
+> the device that raised it. Granting roost this scope therefore lets the daemon
+> answer any pending approval on the gateway, and the daemon's loopback HTTP
+> server becomes the thing standing in front of that authority.
+>
+> Do not grant this scope until the daemon refuses to serve an approval route on
+> a non-loopback `ROOST_HTTP_HOST`. That guard is M2 work and is not built yet.
+
 roost subscribes rather than polls. Nothing is queued for a disconnected client,
 so every reconnect re-subscribes and takes a fresh full snapshot.
 
