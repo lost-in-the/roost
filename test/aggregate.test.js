@@ -314,6 +314,90 @@ test('aggregate still works with no onWarn supplied', () => {
   assert.doesNotThrow(() => aggregate([asking({ prompt: prompt({ kind: 'nope' }) })], { now: NOW }));
 });
 
+// ── §2, the handoff rule ─────────────────────────────────────────────────────
+
+const LONG = 'Approve destructive migration on the production photopush database before continuing?';
+const EXACTLY_64 = 'x'.repeat(64);
+
+test('a question too long for the glass is downgraded to a handoff, not dropped', () => {
+  // Dropping it would be indistinguishable from an error. The panel is supposed
+  // to say a decision is waiting and is not for here — designed behaviour.
+  const out = aggregate([asking({ label: LONG })], { now: NOW });
+  assert.equal(out.prompt.kind, 'handoff');
+  assert.equal(out.prompt.id, 'prm_8f2a', 'still identifies the question');
+  assert.equal(out.state, 'needs_attention');
+});
+
+test('the downgrade is judged on the raw label, not the truncated one', () => {
+  // Truncating first would make the rule unconditionally true: a truncated
+  // label always fits, so every long question would stay one-tap approvable.
+  const out = aggregate([asking({ label: LONG })], { now: NOW });
+  assert.equal(out.label.length, MAX_LABEL_LENGTH, 'label is still truncated as before');
+  assert.equal(out.prompt.kind, 'handoff', 'and the prompt still knows it did not fit');
+});
+
+test('a label exactly at the cap is still approvable', () => {
+  // The cap is a maximum, not a margin. Off-by-one here silently makes
+  // borderline questions unapprovable forever.
+  const out = aggregate([asking({ label: EXACTLY_64 })], { now: NOW });
+  assert.equal(out.prompt.kind, 'approve_reject');
+});
+
+test('one character over the cap is a handoff', () => {
+  const out = aggregate([asking({ label: `${EXACTLY_64}x` })], { now: NOW });
+  assert.equal(out.prompt.kind, 'handoff');
+});
+
+test('a prompt with no label at all is a handoff, not a blind approval', () => {
+  // Worse than truncation: there is nothing to read. Same rule, more so.
+  for (const label of [null, undefined, '', '   ']) {
+    const out = aggregate([asking({ label })], { now: NOW });
+    assert.equal(out.prompt.kind, 'handoff', `label ${JSON.stringify(label)} must not be approvable`);
+  }
+});
+
+test('a source may assert handoff directly, and it is preserved', () => {
+  // A source can know a decision needs real review regardless of length.
+  const out = aggregate([asking({ prompt: prompt({ kind: 'handoff' }) })], { now: NOW });
+  assert.equal(out.prompt.kind, 'handoff');
+});
+
+test('the daemon can only ever make a prompt less approvable, never more', () => {
+  // The invariant the whole rule rests on. A short label must never promote a
+  // handoff the source asserted into something answerable with one tap.
+  const out = aggregate([asking({ label: 'Fine?', prompt: prompt({ kind: 'handoff' }) })], { now: NOW });
+  assert.equal(out.prompt.kind, 'handoff', 'a fitting label must not upgrade a handoff');
+});
+
+test('a handoff still carries reversible, because it describes the operation', () => {
+  const out = aggregate([asking({ label: LONG, prompt: prompt({ reversible: false }) })], { now: NOW });
+  assert.equal(out.prompt.kind, 'handoff');
+  assert.equal(out.prompt.reversible, false);
+});
+
+test('an expired long-labelled prompt is still dropped, not handed off', () => {
+  // Validity is checked before the downgrade. A dead question is not a decision
+  // waiting for you anywhere, so it must not appear as one.
+  const out = aggregate([asking({ label: LONG })], { now: LATER + 1000 });
+  assert.equal(out.prompt, null);
+});
+
+test('a malformed long-labelled prompt is dropped rather than becoming a handoff', () => {
+  const out = aggregate([asking({ label: LONG, prompt: prompt({ reversible: 'yes' }) })], { now: NOW });
+  assert.equal(out.prompt, null);
+});
+
+test('a handoff is not a warning, because it is designed behaviour', () => {
+  const warnings = [];
+  aggregate([asking({ label: LONG })], { now: NOW, onWarn: (m) => warnings.push(m) });
+  assert.deepEqual(warnings, [], 'the handoff path is not a failure to report');
+});
+
+test('an unknown kind is still dropped even when the label fits', () => {
+  // Widening PROMPT_KINDS for handoff must not have widened it to anything.
+  assert.equal(aggregate([asking({ prompt: prompt({ kind: 'wire_transfer' }) })], { now: NOW }).prompt, null);
+});
+
 test('a malformed prompt never takes down the rest of the payload', () => {
   // The whole reason this fails closed instead of throwing the way an
   // unrankable state does.

@@ -76,6 +76,38 @@ Initial contract. Topic `roost/agents/state`, retained, with a Last Will.
     prompt lands on the documented degraded rendering, so taking the whole state
     feed down over a malformed approval would be strictly worse and no safer.
 
+- **`prompt.kind: "handoff"`** (2026-08-25). A second value for `prompt.kind`,
+  meaning the question exists and is not answerable on this surface. The renderer
+  says a decision is waiting and draws no buttons.
+
+  The daemon applies it whenever the winning agent's `label` had to be truncated,
+  or is missing entirely, at the same boundary where truncation happens. The
+  64-character cap is a feature rather than a budget: if a decision cannot be
+  made safely from a 64-character summary, it is not approvable on glass. See §2
+  of `docs/M2-touch-approvals.md`, which is where the rule comes from.
+
+  **This is additive, despite the rule above about enum values.** Adding a value
+  to `state` or `urgency` is breaking in practice because renderers switch on
+  them with no branch for the new value. `prompt.kind` is different, and
+  deliberately so: the schema has always required a renderer to treat an unknown
+  kind as *no prompt*. So a renderer that has never heard of `handoff` shows
+  `needs_attention` with no buttons — which is already almost exactly the right
+  rendering, and is safe in the direction that matters. That requirement is the
+  thing that makes new kinds cheap, so do not relax it.
+
+  Two properties worth keeping:
+
+  - **Downgrade, do not drop.** A dropped prompt is indistinguishable from an
+    error or from a daemon that predates prompts. The panel is supposed to show
+    that a decision is waiting elsewhere; that is designed behaviour, not a
+    failure state, and it cannot show what it was not told.
+  - **The daemon can only ever make a prompt less approvable, never more.** A
+    source may assert `handoff` itself when it knows a decision needs real
+    review, and a short label must never promote that back to one tap. Validity
+    is checked *before* the downgrade, so a malformed or expired prompt is still
+    dropped rather than surfacing as a handoff — a dead question is not a
+    decision waiting for you anywhere.
+
 ### Decisions baked into v1
 
 - **`primary_run_id`, not `run_id`.** The old name implied a single run in a

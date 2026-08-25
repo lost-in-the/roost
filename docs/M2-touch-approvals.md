@@ -13,10 +13,12 @@ Built so far, in the order §8 required:
   to start when roost holds `operator.approvals` on a non-loopback bind.
 - **The `prompt` contract field** (2026-08-25). §5 below, in `aggregate.js`, the
   schema, and the mock's demo loop.
+- **The §2 handoff rule** (2026-08-25). `prompt.kind: "handoff"`, decided at the
+  same boundary that truncates. §2 records the shape and why.
 
-Not built yet: the return path (§3), the renderer's buttons, and the §2 handoff
-rule. Nothing on the panel draws a button today; a `prompt` in the payload is
-currently a field only the schema and the tests observe.
+Not built yet: the return path (§3) and the renderer's buttons. Nothing on the
+panel draws a button today; a `prompt` in the payload is currently a field only
+the schema and the tests observe.
 
 **Goal:** answer an agent's approve/reject prompt from the panel, without
 opening a laptop. That is the second half of the project's success metric —
@@ -72,7 +74,7 @@ More than you might expect. The contract was designed with this in mind.
 
 ---
 
-## 2. The 64-character rule, which is load-bearing
+## 2. The 64-character rule, which is load-bearing — ✅ built 2026-08-25
 
 **Do not add a `detail` field to make longer approvals fit. The cap is the
 feature.**
@@ -106,6 +108,46 @@ plan treats as *designed behaviour, not a limitation*:
 Approving something you could not fully read is the exact failure this cap
 exists to prevent, and the moment a `detail` field appears the panel starts
 becoming the third monitor the whole project is trying not to build.
+
+### The shape it took
+
+`prompt.kind: "handoff"` — a second kind, not a boolean flag, and not a dropped
+prompt. `aggregate.js` applies it whenever the winning agent's label had to be
+truncated, or is missing entirely.
+
+**Why a kind rather than a flag.** A flag like `approvable: false` is unsafe
+under this project's own tolerate-unknown-fields rule: a renderer that ignores
+the flag it does not know draws approve and reject buttons on an unreadable
+question, which is precisely the failure §2 exists to prevent. A new `kind`
+fails the other way. The schema has always required a renderer to treat an
+unknown kind as *no prompt*, so an old renderer seeing `handoff` shows
+`needs_attention` with no buttons — already almost the right rendering. The
+contract degrades toward safety instead of away from it.
+
+**Why downgrade rather than drop.** Dropping the prompt would make a handoff
+indistinguishable from an error, or from a daemon that predates prompts. The
+plan wants the panel to *show* the handoff — "the handoff principle, made
+visible. Not a failure state" — and it cannot show what it was not told.
+
+**No label at all is the same rule, more so.** There is nothing to read, so
+there is nothing to approve. A missing or blank label forces a handoff too.
+
+**Validity is checked before the downgrade.** A malformed or expired prompt is
+still dropped, not handed off: a dead question is not a decision waiting for you
+anywhere, and showing one would send you to a phone for nothing.
+
+**The invariant:** the daemon can only ever make a prompt *less* approvable,
+never more. A source may assert `handoff` itself when it already knows a
+decision needs real review, and a short label must never promote that back to
+one tap. There is a test named for it.
+
+> ⚠ **The daemon does not itself send anything anywhere.** `handoff` asserts
+> "not answerable here" and nothing more. Whether the question actually reaches
+> a phone is OpenClaw's business, through its own notification channels. So a
+> renderer must be careful about the words on the glass: "sent to your phone"
+> claims a delivery roost has not made and cannot observe. Something like
+> "not for the glass — check OpenClaw" is honest. **Decide this when the
+> renderer is built**; the contract does not depend on it either way.
 
 ---
 
@@ -472,6 +514,8 @@ decisions. They do not block the panel's first complete approval path.
 - [ ] Blocking the broker for 35 seconds makes the buttons dead, not just stale-looking
 - [ ] A prompt past `expires_at` is dead with no new message required
 - [ ] A label that cannot be summarised in 64 characters becomes a phone handoff
+      — *daemon half done: it emits `kind: "handoff"`. Needs the renderer to show
+      it, and needs the wording decided (see the warning in §2).*
       instead of an approvable prompt
 - [ ] The Stream Deck still works, unchanged and unmodified
 - [ ] MQTT, logs, fixtures, and browser state contain no raw approval payloads

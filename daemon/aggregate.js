@@ -30,6 +30,19 @@ export function truncateLabel(label) {
   return label.slice(0, MAX_LABEL_LENGTH - 1) + ELLIPSIS;
 }
 
+/**
+ * Does this label survive the cap intact, so a human can read the whole question
+ * on the glass?
+ *
+ * The cap is the feature (§2 of docs/M2-touch-approvals.md). A question that has
+ * to be cut short is a question you would be approving without having read it,
+ * which is the exact failure the cap exists to prevent. No label at all is the
+ * same failure, more so: there is nothing to read.
+ */
+export function labelFitsOnGlass(label) {
+  return typeof label === 'string' && label.trim() !== '' && label.length <= MAX_LABEL_LENGTH;
+}
+
 function rankState(state) {
   const rank = STATE_PRIORITY.indexOf(state);
   if (rank === -1) {
@@ -44,8 +57,18 @@ function rankUrgency(urgency) {
   return rank === -1 ? 0 : rank;
 }
 
-/** Prompt kinds the panel knows how to render. M2 ships exactly one. */
-export const PROMPT_KINDS = ['approve_reject'];
+/**
+ * Prompt kinds the panel knows how to render.
+ *
+ * `approve_reject` draws two buttons. `handoff` draws none: it says this question
+ * exists and is not answerable here, so go and read it properly somewhere with
+ * room for it (§2). A source may assert `handoff` directly when it already knows
+ * a decision needs real review; the daemon also applies it on its own, below.
+ */
+export const PROMPT_KINDS = ['approve_reject', 'handoff'];
+
+/** The kind for a question that cannot be answered from the glass. */
+export const HANDOFF_KIND = 'handoff';
 
 /**
  * Normalise the winning agent's prompt, or return null.
@@ -60,7 +83,7 @@ export const PROMPT_KINDS = ['approve_reject'];
  * Every rejection below is a case where rendering a button would be a guess.
  * The daemon asserts what is approvable; the renderer never decides (§4.1).
  */
-function normalisePrompt(prompt, now, warn) {
+function normalisePrompt(prompt, label, now, warn) {
   if (prompt == null) return null;
   const reject = (why) => {
     warn(`dropping prompt ${JSON.stringify(prompt?.id ?? null)}: ${why}`);
@@ -84,9 +107,21 @@ function normalisePrompt(prompt, now, warn) {
   // is never advertised in the first place.
   if (expiresAt !== null && expiresAt <= now) return reject('already expired');
 
+  // §2, at the same boundary that truncates, because it is the same judgement:
+  // a question that does not fit is a question you cannot fully read, and
+  // approving something you could not fully read is what the cap exists to
+  // prevent. Downgrade rather than drop — the panel should say a decision is
+  // waiting and is not for the glass, which is designed behaviour and not a
+  // failure state. Dropping it would make that indistinguishable from an error.
+  //
+  // Only ever DOWNGRADES. Nothing here can turn a handoff into something
+  // answerable by one tap; the daemon can make a prompt less approvable and
+  // never more.
+  const kind = labelFitsOnGlass(label) ? prompt.kind : HANDOFF_KIND;
+
   return {
     id: prompt.id,
-    kind: prompt.kind,
+    kind,
     reversible: prompt.reversible,
     expires_at: isoSeconds(expiresAt),
   };
@@ -141,6 +176,10 @@ export function aggregate(agents, opts = {}) {
     // prompts and there is none" from "this daemon predates prompts entirely"
     // (undefined). Only the first means buttons are ever possible, and a panel
     // that cannot tell them apart has to guess about its own capabilities.
-    prompt: winner ? normalisePrompt(winner.prompt, now, warn) : null,
+    //
+    // Judged against the RAW label, not the truncated one above: a truncated
+    // label fits by construction, so passing it would make the §2 rule
+    // unconditionally true and quietly answerable.
+    prompt: winner ? normalisePrompt(winner.prompt, winner.label, now, warn) : null,
   };
 }
