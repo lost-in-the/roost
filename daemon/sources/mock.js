@@ -4,7 +4,9 @@ import { StateSource } from './state-source.js';
  * A scripted StateSource. Drives the whole system with no OpenClaw present.
  *
  * Steps are relative: `after` is milliseconds from the start of the loop, and
- * `since` is likewise relative, translated to wall-clock on emission.
+ * `since` and `prompt.expiresAt` are likewise relative, translated to wall-clock
+ * on emission. A hardcoded absolute expiry would be in the past forever, so
+ * every prompt in the demo would be dropped as expired the moment it aggregated.
  */
 
 const L = (s) => s; // readability marker for labels
@@ -38,27 +40,41 @@ export const DEMO_SCRIPT = [
     { id: 'bosun', state: 'stalled', label: L('No output for 4m — waiting on a registry lock'), runId: 'run-90cc', urgency: 'notify', since: 27000 },
   ]},
 
-  // A third agent needs a human. Outranks the stall. Also exercises truncation:
-  // this label is deliberately longer than the 64-character contract maximum.
+  // A third agent needs a human. Outranks the stall. It carries a prompt, so
+  // this is the step where the panel draws buttons: short label, reversible,
+  // expiring when cutty moves on to its next question at 51000.
   { after: 35000, agents: [
     { id: 'ariel', state: 'thinking', label: L('Deploying photopush to k3s'), runId: 'run-4f1a', urgency: 'ambient', since: 11000 },
     { id: 'bosun', state: 'stalled', label: L('No output for 4m — waiting on a registry lock'), runId: 'run-90cc', urgency: 'notify', since: 27000 },
-    { id: 'cutty', state: 'needs_attention', label: L('Approve destructive migration on the production photopush database before continuing?'), runId: 'run-1d7e', urgency: 'blocking', since: 35000 },
+    { id: 'cutty', state: 'needs_attention', label: L('Approve deploy photopush to staging?'), runId: 'run-1d7e', urgency: 'blocking', since: 35000,
+      prompt: { id: 'prm_8f2a', kind: 'approve_reject', reversible: true, expiresAt: 51000 } },
   ]},
 
   // The simultaneous-transition race: two agents change in the same instant.
-  { after: 44000, agents: [
-    { id: 'ariel', state: 'idle', label: null, runId: null, urgency: 'ambient', since: 44000 },
-    { id: 'bosun', state: 'idle', label: null, runId: null, urgency: 'ambient', since: 44000 },
-    { id: 'cutty', state: 'needs_attention', label: L('Approve destructive migration on the production photopush database before continuing?'), runId: 'run-1d7e', urgency: 'blocking', since: 35000 },
+  // cutty is unchanged, still asking, so the prompt must survive the race.
+  { after: 43000, agents: [
+    { id: 'ariel', state: 'idle', label: null, runId: null, urgency: 'ambient', since: 43000 },
+    { id: 'bosun', state: 'idle', label: null, runId: null, urgency: 'ambient', since: 43000 },
+    { id: 'cutty', state: 'needs_attention', label: L('Approve deploy photopush to staging?'), runId: 'run-1d7e', urgency: 'blocking', since: 35000,
+      prompt: { id: 'prm_8f2a', kind: 'approve_reject', reversible: true, expiresAt: 51000 } },
+  ]},
+
+  // The SAME run asks a second question — which is why answering names the
+  // prompt id and not the run id. This one carries no prompt, so it exercises
+  // two things at once: truncation (the label is deliberately longer than the
+  // 64-character contract maximum) and the degraded rendering, needs_attention
+  // with no buttons, which is where a question too long to fit on the glass
+  // belongs until the handoff rule in §2 exists.
+  { after: 51000, agents: [
+    { id: 'cutty', state: 'needs_attention', label: L('Approve destructive migration on the production photopush database before continuing?'), runId: 'run-1d7e', urgency: 'blocking', since: 51000 },
   ]},
 
   // Answered. Back to listening, then quiet.
-  { after: 51000, agents: [
-    { id: 'cutty', state: 'listening', label: L('Listening'), runId: 'run-1d7e', urgency: 'ambient', since: 51000 },
+  { after: 59000, agents: [
+    { id: 'cutty', state: 'listening', label: L('Listening'), runId: 'run-1d7e', urgency: 'ambient', since: 59000 },
   ]},
-  { after: 56000, agents: [
-    { id: 'cutty', state: 'idle', label: null, runId: null, urgency: 'ambient', since: 56000 },
+  { after: 64000, agents: [
+    { id: 'cutty', state: 'idle', label: null, runId: null, urgency: 'ambient', since: 64000 },
   ]},
 ];
 
@@ -90,6 +106,12 @@ function stepIndexAt(script, elapsedMs) {
     if (t >= script[i].after) index = i;
   }
   return index;
+}
+
+/** A scripted prompt's relative expiry as wall-clock. Null expiry stays null. */
+export function absoluteExpiry(prompt, cycleOrigin) {
+  const relative = prompt?.expiresAt ?? null;
+  return relative === null ? null : cycleOrigin + relative;
 }
 
 /** Pure: the agent set a script yields at a given elapsed time. Loops forever. */
@@ -124,6 +146,10 @@ export class MockStateSource extends StateSource {
     this.emit('agents', step.agents.map((a) => ({
       ...a,
       since: cycleOrigin + (a.since ?? 0),
+      // Same relative-to-wall-clock translation as `since`, and for the same
+      // reason. Spread conditionally so an agent with no prompt stays without
+      // one rather than gaining an explicit undefined.
+      ...(a.prompt ? { prompt: { ...a.prompt, expiresAt: absoluteExpiry(a.prompt, cycleOrigin) } } : {}),
     })));
     if (step.die) this.emit('die');
   }

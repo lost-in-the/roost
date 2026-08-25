@@ -44,13 +44,65 @@ function rankUrgency(urgency) {
   return rank === -1 ? 0 : rank;
 }
 
+/** Prompt kinds the panel knows how to render. M2 ships exactly one. */
+export const PROMPT_KINDS = ['approve_reject'];
+
 /**
- * @param {Array} agents  Agent records: { id, state, label, runId, urgency, since }
- * @param {{now?: number}} [opts]
+ * Normalise the winning agent's prompt, or return null.
+ *
+ * FAIL CLOSED, AND DO NOT THROW. `rankState` above throws on a bad state because
+ * a payload with the wrong state is actively misleading. A prompt is different:
+ * dropping it yields `needs_attention` with no buttons, which §5 of
+ * docs/M2-touch-approvals.md already defines as the correct degraded rendering.
+ * Throwing instead would take the whole state feed down over a malformed
+ * approval — strictly worse, and no safer.
+ *
+ * Every rejection below is a case where rendering a button would be a guess.
+ * The daemon asserts what is approvable; the renderer never decides (§4.1).
+ */
+function normalisePrompt(prompt, now, warn) {
+  if (prompt == null) return null;
+  const reject = (why) => {
+    warn(`dropping prompt ${JSON.stringify(prompt?.id ?? null)}: ${why}`);
+    return null;
+  };
+
+  if (typeof prompt.id !== 'string' || prompt.id === '') return reject('no usable id');
+  // Answering names the QUESTION, not the run, so an unidentified prompt cannot
+  // be answered even if it rendered.
+  if (!PROMPT_KINDS.includes(prompt.kind)) return reject(`unknown kind ${JSON.stringify(prompt.kind)}`);
+  // A kind the panel does not know is a kind it cannot draw the right controls
+  // for. Room for later kinds is the point of the field; guessing is not.
+  if (typeof prompt.reversible !== 'boolean') return reject('reversible is not a boolean');
+  // Absent MUST NOT read as "reversible", which is the one-tap path. A missing
+  // assertion is not a safe default in either direction, so there is no prompt.
+
+  const expiresAt = prompt.expiresAt ?? null;
+  if (expiresAt !== null && !Number.isFinite(expiresAt)) return reject('expiresAt is not a timestamp');
+  // Already dead. §4.3 gives the panel its own `expires_at` backstop for when
+  // the daemon cannot republish; this is the daemon doing its half, so a corpse
+  // is never advertised in the first place.
+  if (expiresAt !== null && expiresAt <= now) return reject('already expired');
+
+  return {
+    id: prompt.id,
+    kind: prompt.kind,
+    reversible: prompt.reversible,
+    expires_at: isoSeconds(expiresAt),
+  };
+}
+
+/**
+ * @param {Array} agents  Agent records: { id, state, label, runId, urgency, since, prompt }
+ * @param {{now?: number, onWarn?: (msg: string) => void}} [opts]
  * @returns {object} a v1 state-contract payload
  */
 export function aggregate(agents, opts = {}) {
   const now = opts.now ?? Date.now();
+  // Defaults to a no-op so aggregate() stays pure and callable from a test with
+  // no wiring. The daemon passes its logger, so a dropped prompt is never silent
+  // in production — the whole hazard of failing closed is doing it quietly.
+  const warn = opts.onWarn ?? (() => {});
   const ranked = agents.map((a) => ({ ...a, _rank: rankState(a.state) }));
   const active = ranked.filter((a) => a.state !== 'idle');
 
@@ -81,5 +133,14 @@ export function aggregate(agents, opts = {}) {
     // state. `ts` is publish time and cannot express elapsed. Renderers that
     // predate this field ignore it, per the tolerate-unknown-fields rule.
     since: winner ? isoSeconds(winner.since ?? null) : null,
+    // Additive to v1, from the agent that won the state race — the same agent
+    // `label` and `primary_run_id` describe, so the buttons cannot end up
+    // answering a question the panel is not showing.
+    //
+    // `null` rather than absent: it lets a renderer tell "this daemon supports
+    // prompts and there is none" from "this daemon predates prompts entirely"
+    // (undefined). Only the first means buttons are ever possible, and a panel
+    // that cannot tell them apart has to guess about its own capabilities.
+    prompt: winner ? normalisePrompt(winner.prompt, now, warn) : null,
   };
 }

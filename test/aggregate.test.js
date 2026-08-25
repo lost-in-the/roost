@@ -181,3 +181,146 @@ test('since tracks the winner, not the agent that has been running longest overa
   ]);
   assert.equal(out.since, '2026-08-21T17:46:00Z');
 });
+
+// ── prompt (M2 contract addition) ────────────────────────────────────────────
+
+const NOW = Date.parse('2026-08-21T18:04:11Z');
+const LATER = Date.parse('2026-08-21T18:09:02Z');
+
+const prompt = (over = {}) => ({
+  id: 'prm_8f2a',
+  kind: 'approve_reject',
+  reversible: true,
+  expiresAt: LATER,
+  ...over,
+});
+
+const asking = (over = {}) => agent({
+  id: 'cutty',
+  state: 'needs_attention',
+  label: 'Approve deploy photopush to staging?',
+  runId: 'run-1d7e',
+  urgency: 'blocking',
+  prompt: prompt(),
+  ...over,
+});
+
+test('a well-formed prompt reaches the payload, with expiry as an iso string', () => {
+  const out = aggregate([asking()], { now: NOW });
+  assert.deepEqual(out.prompt, {
+    id: 'prm_8f2a',
+    kind: 'approve_reject',
+    reversible: true,
+    expires_at: '2026-08-21T18:09:02Z',
+  });
+});
+
+test('prompt is null, not absent, when nothing is asking', () => {
+  const out = aggregate([agent({ id: 'a', state: 'thinking', runId: 'r' })], { now: NOW });
+  assert.equal(out.prompt, null);
+  assert.ok('prompt' in out, 'absent would mean "daemon predates prompts", a different fact');
+});
+
+test('prompt is null when nothing is running at all', () => {
+  const out = aggregate([], { now: NOW });
+  assert.equal(out.prompt, null);
+  assert.ok('prompt' in out);
+});
+
+test('the prompt comes from the agent that won the state race, not any other', () => {
+  // Otherwise the buttons answer a question the panel is not showing.
+  const out = aggregate([
+    agent({ id: 'quiet', state: 'thinking', runId: 'r-q', prompt: prompt({ id: 'prm_wrong' }) }),
+    asking(),
+  ], { now: NOW });
+  assert.equal(out.prompt.id, 'prm_8f2a');
+  assert.equal(out.primary_run_id, 'run-1d7e', 'the prompt and the run id describe one agent');
+});
+
+test('a prompt past its expiry is dropped rather than advertised', () => {
+  // The panel has its own expires_at backstop; this is the daemon doing its
+  // half, so a corpse is never published in the first place.
+  const out = aggregate([asking()], { now: LATER + 1000 });
+  assert.equal(out.prompt, null);
+  assert.equal(out.state, 'needs_attention', 'the state still says a human is needed');
+});
+
+test('a prompt expiring exactly now is already dead', () => {
+  assert.equal(aggregate([asking()], { now: LATER }).prompt, null);
+});
+
+test('a prompt with no expiry is allowed and carries a null expires_at', () => {
+  const out = aggregate([asking({ prompt: prompt({ expiresAt: null }) })], { now: NOW });
+  assert.equal(out.prompt.expires_at, null, 'no expiry supplied is not the same as expired');
+  assert.equal(out.prompt.id, 'prm_8f2a');
+});
+
+test('a prompt whose reversible is missing is dropped, never defaulted', () => {
+  // Defaulting either way is a guess. True would silently one-tap something
+  // destructive; false would demand a confirm the daemon never asserted.
+  const p = prompt();
+  delete p.reversible;
+  assert.equal(aggregate([asking({ prompt: p })], { now: NOW }).prompt, null);
+});
+
+test('a truthy non-boolean reversible is dropped, not coerced', () => {
+  for (const bad of ['true', 1, {}]) {
+    assert.equal(aggregate([asking({ prompt: prompt({ reversible: bad }) })], { now: NOW }).prompt, null);
+  }
+});
+
+test('an irreversible prompt survives, carrying false through for the second confirm', () => {
+  const out = aggregate([asking({ prompt: prompt({ reversible: false }) })], { now: NOW });
+  assert.equal(out.prompt.reversible, false, 'false is an assertion, not a missing value');
+});
+
+test('a prompt of an unknown kind is dropped, since the panel cannot draw it', () => {
+  for (const kind of ['approve_reject_maybe', 'text_input', undefined, null, '']) {
+    assert.equal(aggregate([asking({ prompt: prompt({ kind }) })], { now: NOW }).prompt, null);
+  }
+});
+
+test('a prompt with no usable id is dropped, since an answer must name the question', () => {
+  for (const id of ['', undefined, null, 42]) {
+    assert.equal(aggregate([asking({ prompt: prompt({ id }) })], { now: NOW }).prompt, null);
+  }
+});
+
+test('a non-numeric expiry is dropped rather than treated as no expiry', () => {
+  for (const expiresAt of ['2026-08-21T18:09:02Z', NaN, Infinity]) {
+    assert.equal(aggregate([asking({ prompt: prompt({ expiresAt }) })], { now: NOW }).prompt, null);
+  }
+});
+
+test('dropping a prompt is reported, so failing closed is never silent', () => {
+  const warnings = [];
+  const out = aggregate([asking({ prompt: prompt({ kind: 'nope' }) })], {
+    now: NOW,
+    onWarn: (m) => warnings.push(m),
+  });
+  assert.equal(out.prompt, null);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /prm_8f2a/, 'the message names the prompt that was dropped');
+  assert.match(warnings[0], /nope/, 'and why');
+});
+
+test('a valid prompt reports nothing', () => {
+  const warnings = [];
+  aggregate([asking()], { now: NOW, onWarn: (m) => warnings.push(m) });
+  assert.deepEqual(warnings, []);
+});
+
+test('aggregate still works with no onWarn supplied', () => {
+  assert.doesNotThrow(() => aggregate([asking({ prompt: prompt({ kind: 'nope' }) })], { now: NOW }));
+});
+
+test('a malformed prompt never takes down the rest of the payload', () => {
+  // The whole reason this fails closed instead of throwing the way an
+  // unrankable state does.
+  const out = aggregate([asking({ prompt: { garbage: true } })], { now: NOW });
+  assert.equal(out.prompt, null);
+  assert.equal(out.state, 'needs_attention');
+  assert.equal(out.label, 'Approve deploy photopush to staging?');
+  assert.equal(out.urgency, 'blocking');
+  assert.equal(out.count, 1);
+});

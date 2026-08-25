@@ -48,6 +48,34 @@ Initial contract. Topic `roost/agents/state`, retained, with a Last Will.
   to timing from when it first saw the state, which is less accurate across a
   renderer restart but never wrong in a way that misleads.
 
+- **`prompt`** (2026-08-25). Object or null. The open question from the agent
+  named by `primary_run_id`: `{ id, kind, reversible, expires_at }`.
+
+  Added for M2 (touch approvals). No v1 field could express it: `state:
+  needs_attention` says a human is needed, and `primary_run_id` names the run,
+  but one run can ask several questions in sequence — so answering has to name
+  the *question*, and nothing in v1 did.
+
+  Additive, so `v` stays 1, and the degradation is the point: a renderer that
+  does not understand `prompt` shows `needs_attention` with no buttons. That is
+  the correct fallback rather than a broken one — it says something needs you and
+  sends you to a laptop. The Stream Deck keeps working untouched.
+
+  Three properties that are load-bearing rather than incidental:
+
+  - **`null` is not the same as absent.** Null means this daemon supports prompts
+    and there is none; absent means the daemon predates the field. Only the first
+    means buttons are ever possible, and a renderer that cannot tell them apart
+    has to guess about its own capabilities.
+  - **`reversible` is asserted by the daemon.** It drives one-tap versus a second
+    confirm. A renderer inferring it from label text will eventually infer it
+    wrong and silently one-tap something destructive.
+  - **An invalid or expired prompt is dropped, not published.** `aggregate.js`
+    fails closed to no prompt and logs why. It deliberately does NOT throw the
+    way an unrankable `state` does: a wrong state misleads, whereas a missing
+    prompt lands on the documented degraded rendering, so taking the whole state
+    feed down over a malformed approval would be strictly worse and no safer.
+
 ### Decisions baked into v1
 
 - **`primary_run_id`, not `run_id`.** The old name implied a single run in a
