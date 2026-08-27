@@ -36,7 +36,7 @@ Current physical layout:
 |---|---|---:|---|
 | LG DisplayPort monitor | `LG Electronics LG HDR 4K 0x00031626` | `0x0` | primary desktop, workspaces 1-10 |
 | Lenovo panel | `Lenovo Group Limited LEN L1950wD B3432845` | `3840x0` | dedicated `roost` workspace |
-| `sunshine-vd` | Hyprland headless output | `4864x0` | retained for later DP→USB-C and Moonlight testing |
+| `sunshine-vd` | Hyprland headless output | `4864x0` | retained desktop/Moonlight fallback when the LG input is away |
 
 Loaded from `~/.config/hypr/hyprland.lua` with:
 

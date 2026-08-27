@@ -70,7 +70,19 @@ local TOUCH_DEVICE = "waveshare-ws170120"
 local TOUCH_CONNECTOR_FALLBACK = "HDMI-A-1"
 
 local function connector_for(description)
-  for _, m in ipairs(hl.get_monitors()) do
+  local monitors = hl.get_monitors()
+
+  -- Omarchy's keybindings menu evaluates this config with a permissive Lua
+  -- stub. The stub is a table whose __index always returns itself, so ipairs()
+  -- never reaches nil and every SUPER+K press spins forever. Hyprland returns
+  -- an ordinary array here; rawlen/rawget preserve that behavior while making
+  -- the source-derived menu scan finite.
+  if type(monitors) ~= "table" then
+    return nil
+  end
+
+  for index = 1, rawlen(monitors) do
+    local m = rawget(monitors, index)
     if m.description == description then
       return m.name
     end
