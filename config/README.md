@@ -23,6 +23,21 @@ Wayland, Lua config parser. Chromium 151.
 **copied**, because it describes this machine's hardware and should not be
 overwritten by a checkout made on different hardware.
 
+Display topology outside the roost repo is owned by chezmoi:
+
+| File | Source of truth |
+|---|---|
+| `~/.config/hypr/monitors.lua` | `~/.local/share/chezmoi/dot_config/hypr/monitors.lua` |
+| `~/.config/hypr/sunshine-vd.lua` | `~/.local/share/chezmoi/dot_config/hypr/sunshine-vd.lua` |
+
+Current physical layout:
+
+| Output | Description | Position | Role |
+|---|---|---:|---|
+| LG DisplayPort monitor | `LG Electronics LG HDR 4K 0x00031626` | `0x0` | primary desktop, workspaces 1-10 |
+| Lenovo panel | `Lenovo Group Limited LEN L1950wD B3432845` | `3840x0` | dedicated `roost` workspace |
+| `sunshine-vd` | Hyprland headless output | `4864x0` | retained for later DP→USB-C and Moonlight testing |
+
 Loaded from `~/.config/hypr/hyprland.lua` with:
 
 ```lua
@@ -67,10 +82,11 @@ card1-HDMI-A-1  connected
 ```
 
 **That is no longer the situation.** As of 2026-08-23 the panel is connected on
-`HDMI-A-1` and everything below is verified on the real glass: the output is
-pinned by description, the `roost` workspace is bound to it, and the renderer
-sits fullscreen at 1024x600. `roost-monitor.lua` carries the real description
-and `verified = true`.
+`HDMI-A-1` and everything below is verified on the real glass. As of
+2026-08-27 the LG 4K monitor is the primary desktop on DisplayPort at `0x0`,
+the panel sits at `3840x0`, the `roost` workspace is bound to it, and the
+renderer sits fullscreen at 1024x600. `roost-monitor.lua` carries the real
+description and `verified = true`.
 
 The panel still reports a **cloned EDID** — `Lenovo Group Limited LEN L1950wD
 B3432845`, serial `0x01010101` (a placeholder), max image size 15cm x 10cm. The
@@ -105,6 +121,12 @@ The panel drops out of fullscreen and gives 26px back to the bar (1024x600 ->
 1024x574). Nothing errors, so on a wall display it can go unnoticed for days.
 
 Workaround, idempotent and safe at any time: `./scripts/launch-panel.sh`
+
+The same script also evicts any already-mapped non-panel client from
+`name:roost` before it refocuses and fullscreens the panel. The Hyprland
+window rule in `hypr/roost.lua` prevents ordinary new windows from opening
+there, but static window-rule effects only run at initial mapping time. The
+script repair path covers windows that were already present or manually moved.
 
 **The cause, caught by instrumenting the window geometry (2026-08-24):**
 

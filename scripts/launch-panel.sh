@@ -75,13 +75,37 @@ previous_monitor=$(hyprctl monitors -j | jq -r '.[] | select(.focused) | .name')
 #    then hand focus straight back. The workspace stays put afterwards.
 hyprctl dispatch "hl.dsp.focus({ workspace = \"${WORKSPACE}\" })" >/dev/null
 
-# 6. Fullscreen the panel so it covers the bar and uses the whole glass.
+# 6. Evict any non-panel windows that landed on the panel workspace. Static
+#    window rules only prevent initial opens; this repairs existing state.
+hyprctl clients -j \
+  | jq -r --arg ws "roost" --arg panel "$address" '
+      .[]
+      | select(.workspace.name == $ws)
+      | select(.address != $panel)
+      | .address
+    ' \
+  | while IFS= read -r intruder; do
+      [ -n "$intruder" ] || continue
+      log "evicting non-panel window ${intruder} from ${WORKSPACE}"
+      if hyprctl dispatch "hl.dsp.focus({ window = \"address:${intruder}\" })" >/dev/null; then
+        hyprctl dispatch 'hl.dsp.window.move({ workspace = "1", follow = false })' >/dev/null || true
+        fullscreen=$(hyprctl clients -j | jq -r --arg a "$intruder" '.[] | select(.address == $a) | .fullscreen' | head -1)
+        if [ -n "$fullscreen" ] && [ "$fullscreen" != "0" ]; then
+          log "clearing fullscreen=${fullscreen} on evicted window ${intruder}"
+          if hyprctl dispatch "hl.dsp.focus({ window = \"address:${intruder}\" })" >/dev/null; then
+            hyprctl dispatch 'hl.dsp.window.fullscreen()' >/dev/null || true
+          fi
+        fi
+      fi
+    done
+
+# 7. Fullscreen the panel so it covers the bar and uses the whole glass.
 hyprctl dispatch "hl.dsp.focus({ window = \"address:${address}\" })" >/dev/null
 if [ "$(hyprctl clients -j | jq -r --arg a "$address" '.[] | select(.address == $a) | .fullscreen')" = "0" ]; then
   hyprctl dispatch 'hl.dsp.window.fullscreen()' >/dev/null
 fi
 
-# 7. Give the desk back to the human.
+# 8. Give the desk back to the human.
 if [ -n "$previous_monitor" ]; then
   hyprctl dispatch "hl.dsp.focus({ monitor = \"${previous_monitor}\" })" >/dev/null
 fi

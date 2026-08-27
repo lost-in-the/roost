@@ -16,11 +16,10 @@ return {
   mode = "1024x600@60",
 
   -- The output's ACTUAL position, not "auto". With auto, enumeration order
-  -- decides the layout: measured on this machine, a reload could swap this
-  -- panel and the Sunshine virtual output (panel to 1920x0, sunshine-vd to
-  -- 0x0). Sunshine maps absolute input against a fixed layout, so that
-  -- confined the remote pointer to part of the stream. Both sides are pinned.
-  position = "0x0",
+  -- decides the layout. The LG DisplayPort monitor is the primary desktop at
+  -- 0x0; this panel sits immediately to its right and owns only the named
+  -- `roost` workspace. Sunshine's retained headless output sits after it.
+  position = "3840x0",
   scale = 1,
 
   -- Escape hatch: a raw connector name, used ONLY for outputs that report no

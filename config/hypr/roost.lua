@@ -23,6 +23,7 @@ local MONITOR = panel.output or ("desc:" .. panel.description)
 -- --app URL (e.g. "chrome-127.0.0.1__-Default"), which changes with host and
 -- port, making it the less stable identifier.
 local PANEL_TITLE = "^roost$"
+local NON_PANEL_TITLE = "negative:" .. PANEL_TITLE
 
 -- 1. The output ------------------------------------------------------------
 
@@ -105,6 +106,17 @@ hl.workspace_rule({
 
 hl.window_rule({ match = { title = PANEL_TITLE }, workspace = "name:roost" })
 hl.window_rule({ match = { title = PANEL_TITLE }, fullscreen = true })
+
+-- Prevention guard: ordinary windows should not stay on the panel workspace.
+-- Static window-rule effects are evaluated when a window opens, so
+-- scripts/launch-panel.sh also imperatively evicts already-mapped windows.
+hl.window_rule({
+  match = {
+    workspace = "name:roost",
+    title = NON_PANEL_TITLE,
+  },
+  workspace = "1 silent",
+})
 
 -- Strip decoration. On 0.56.2 the fields are `border_size` and `decorate`;
 -- `no_border` and `no_rounding` do NOT exist and raise config errors.
