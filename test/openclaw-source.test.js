@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { OpenClawStateSource } from '../daemon/sources/openclaw.js';
+import { SESSION_VIEWER_PRESENCE_MAX_KEYS } from '@openclaw/gateway-protocol/schema';
+import { OpenClawStateSource, selectViewerSessionKeys } from '../daemon/sources/openclaw.js';
 
 const sess = (key, active) => ({ key, displayName: key, hasActiveRun: active, archived: false, lastActivityAt: 1 });
 
@@ -16,6 +17,9 @@ function fakeGateway({ sessions = [] } = {}) {
         state.requests.push(method);
         state.requestParams.push({ method, params });
         if (method === 'sessions.list') return Promise.resolve({ sessions: state.sessions, count: state.sessions.length });
+        if (method === 'sessions.viewers.set' && params.sessionKeys.length > SESSION_VIEWER_PRESENCE_MAX_KEYS) {
+          return Promise.reject(new Error('Too many session keys'));
+        }
         return Promise.resolve({});
       },
     };
@@ -232,5 +236,49 @@ test('declares itself a viewer of the live sessions, because the audience is per
     `requests were ${JSON.stringify(gw.state.requests)}`);
   const call = gw.state.requestParams.find((r) => r.method === 'sessions.viewers.set');
   assert.deepEqual(call.params.sessionKeys, ['a', 'b'], 'must name every live session');
+  source.stop();
+});
+
+test('selects viewer keys deterministically when the catalog exceeds the gateway cap', () => {
+  const sessions = Array.from({ length: SESSION_VIEWER_PRESENCE_MAX_KEYS + 5 }, (_, i) => ({
+    ...sess(`idle-${String(i).padStart(2, '0')}`, false),
+    lastActivityAt: i + 1,
+  }));
+  sessions.push(
+    { ...sess('active-late', true), lastActivityAt: 0 },
+    { ...sess('digested-late', false), lastActivityAt: 0 },
+  );
+  const keys = selectViewerSessionKeys(sessions, new Map([['digested-late', { health: 'stuck' }]]));
+
+  assert.equal(keys.length, SESSION_VIEWER_PRESENCE_MAX_KEYS);
+  assert.equal(keys[0], 'active-late', 'an active run must outrank older idle catalog entries');
+  assert.equal(keys[1], 'digested-late', 'an observed session remains relevant for digest continuity');
+  assert.equal(keys.includes('idle-00'), false, 'the least relevant idle session is dropped first');
+});
+
+test('caps viewers.set without warning while still emitting the full agent set', async () => {
+  const sessions = Array.from({ length: SESSION_VIEWER_PRESENCE_MAX_KEYS + 4 }, (_, i) => ({
+    ...sess(`idle-${String(i).padStart(2, '0')}`, false),
+    lastActivityAt: i + 1,
+  }));
+  sessions.push({ ...sess('active-beyond-cap', true), lastActivityAt: 0 });
+  const gw = fakeGateway({ sessions });
+  const source = makeSource(gw);
+  const seen = [];
+  const warnings = [];
+  source.on('agents', (a) => seen.push(a));
+  source.on('warning', (w) => warnings.push(w));
+
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+
+  const call = gw.state.requestParams.find((r) => r.method === 'sessions.viewers.set');
+  assert.equal(call.params.sessionKeys.length, SESSION_VIEWER_PRESENCE_MAX_KEYS);
+  assert.ok(call.params.sessionKeys.includes('active-beyond-cap'), 'the active session remains in viewer presence');
+  assert.equal(warnings.length, 0, `unexpected warnings: ${warnings.join('\n')}`);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].length, sessions.length, 'viewer presence cap must not truncate the Roost state projection');
+  assert.equal(seen[0].find((agent) => agent.id === 'active-beyond-cap')?.state, 'thinking');
   source.stop();
 });

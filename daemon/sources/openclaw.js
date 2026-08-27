@@ -1,4 +1,5 @@
 import { GATEWAY_CLIENT_CAPS } from '@openclaw/gateway-protocol/client-info';
+import { SESSION_VIEWER_PRESENCE_MAX_KEYS } from '@openclaw/gateway-protocol/schema';
 import { StateSource } from './state-source.js';
 import { deviceSigningDeps } from '../openclaw/ed25519.js';
 import { mapSessionsToAgents } from '../openclaw/map-sessions.js';
@@ -56,6 +57,45 @@ const READ_ONLY_SCOPES = ['operator.read'];
  * implements, and roost at M1 has neither the scope nor the UI for approvals.
  */
 const CAPS = [GATEWAY_CLIENT_CAPS.TOOL_EVENTS];
+
+function finiteNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function relevanceTimestamp(s) {
+  return Math.max(
+    finiteNumber(s?.lastActivityAt),
+    finiteNumber(s?.lastInteractionAt),
+    finiteNumber(s?.updatedAt),
+    finiteNumber(s?.pinnedAt),
+    finiteNumber(s?.createdAt),
+  );
+}
+
+function compareViewerCandidates(a, b) {
+  return Number(Boolean(b.session?.hasActiveRun)) - Number(Boolean(a.session?.hasActiveRun))
+    || Number(b.hasDigest) - Number(a.hasDigest)
+    || Number(Boolean(b.session?.pinned)) - Number(Boolean(a.session?.pinned))
+    || Number(Boolean(b.session?.unread)) - Number(Boolean(a.session?.unread))
+    || relevanceTimestamp(b.session) - relevanceTimestamp(a.session)
+    || a.key.localeCompare(b.key);
+}
+
+export function selectViewerSessionKeys(sessions = [], digests, limit = SESSION_VIEWER_PRESENCE_MAX_KEYS) {
+  const boundedLimit = Math.max(0, Math.floor(finiteNumber(limit)));
+  const seen = new Set();
+  const candidates = [];
+  for (const session of sessions) {
+    const key = typeof session?.key === 'string' ? session.key.trim() : '';
+    if (!key || seen.has(key) || session?.archived) continue;
+    seen.add(key);
+    candidates.push({ key, session, hasDigest: Boolean(digests?.has(key)) });
+  }
+  return candidates
+    .toSorted(compareViewerCandidates)
+    .slice(0, boundedLimit)
+    .map((candidate) => candidate.key);
+}
 
 export class OpenClawStateSource extends StateSource {
   constructor({
@@ -144,7 +184,7 @@ export class OpenClawStateSource extends StateSource {
       // audience.recipients(sessionKey, agentId), so the gateway also has to be
       // told WHICH sessions this connection is viewing. Declaring only the
       // global flag produced silence across a real run.
-      const keys = sessions.map((s) => s?.key).filter(Boolean);
+      const keys = selectViewerSessionKeys(sessions, this.digests);
       try { await this.client.request('sessions.viewers.set', { sessionKeys: keys }); }
       catch (err) { this.emit('warning', `openclaw viewers.set: ${err?.message ?? err}`); }
 
