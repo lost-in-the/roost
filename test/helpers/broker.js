@@ -1,16 +1,21 @@
 import { Aedes } from 'aedes';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-/** Start an in-process MQTT broker on an ephemeral port. */
+/** Start an in-process MQTT broker on a private Unix socket. */
 export async function startBroker() {
   const aedes = await Aedes.createBroker();
   const sockets = new Set();
+  const dir = mkdtempSync(join(tmpdir(), 'roost-broker-'));
+  const socketPath = join(dir, 'broker.sock');
   const server = createServer((socket) => {
     sockets.add(socket);
     socket.on('close', () => sockets.delete(socket));
     aedes.handle(socket);
   });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve) => server.listen(socketPath, resolve));
 
   // `server.close()` only completes once every connection is gone, so any
   // shutdown has to destroy the sockets first or it deadlocks.
@@ -18,22 +23,25 @@ export async function startBroker() {
     for (const socket of sockets) socket.destroy();
     sockets.clear();
   };
+  const cleanupSocketDir = () => rmSync(dir, { recursive: true, force: true });
 
   return {
     aedes,
     server,
     sockets,
-    port: server.address().port,
-    url: `mqtt://127.0.0.1:${server.address().port}`,
+    socketPath,
+    url: `mqtt+unix://${socketPath}`,
     /** Cut every live connection and stop listening, as a broker outage would. */
     async cutOff() {
       destroySockets();
       await new Promise((r) => server.close(() => r()));
+      cleanupSocketDir();
     },
     async close() {
       destroySockets();
       if (server.listening) await new Promise((r) => server.close(() => r()));
       await new Promise((r) => aedes.close(() => r()));
+      cleanupSocketDir();
     },
   };
 }

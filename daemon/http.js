@@ -29,13 +29,33 @@ const json = (res, status, body) => {
   res.end(payload);
 };
 
-export async function startHttpServer({ host, port, laptopLog, rendererConfig, onLog = () => {}, onRecorded = () => {} }) {
+export async function startHttpServer({ host, port, socketPath, laptopLog, rendererConfig, onLog = () => {}, onRecorded = () => {}, getStatus = () => ({}) }) {
+  const startedAt = new Date();
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, `http://${host}`);
     const path = url.pathname;
 
     if (path === '/api/config') {
       return json(res, 200, rendererConfig);
+    }
+
+    if (path === '/status') {
+      if (req.method === 'GET') {
+        const status = getStatus() ?? {};
+        return json(res, 200, {
+          ok: true,
+          pid: process.pid,
+          uptimeSec: Math.max(0, Math.floor((Date.now() - startedAt.getTime()) / 1000)),
+          startedAt: startedAt.toISOString(),
+          version: status.version,
+          source: status.source,
+          mqtt: {
+            connected: status.mqtt?.connected ?? false,
+            topic: status.mqtt?.topic,
+          },
+        });
+      }
+      return json(res, 405, { error: 'method not allowed' });
     }
 
     if (path === '/api/laptop-open') {
@@ -69,11 +89,18 @@ export async function startHttpServer({ host, port, laptopLog, rendererConfig, o
     }
   });
 
-  await new Promise((resolve) => server.listen(port, host, resolve));
+  await new Promise((resolve) => {
+    if (socketPath) {
+      server.listen(socketPath, resolve);
+      return;
+    }
+    server.listen(port, host, resolve);
+  });
 
   return {
     server,
-    port: server.address().port,
+    port: typeof server.address() === 'object' ? server.address().port : undefined,
+    socketPath,
     close: () => new Promise((resolve) => server.close(() => resolve())),
   };
 }

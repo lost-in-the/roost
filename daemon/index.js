@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from 'node:fs';
 import { loadConfig } from './config.js';
 import { aggregate } from './aggregate.js';
 import { StatePublisher } from './publisher.js';
@@ -9,6 +10,10 @@ import { MockStateSource, SCRIPTS } from './sources/mock.js';
 import { createOpenClawSource, resolveDeviceFile } from './openclaw/connect.js';
 import { readDeviceToken } from './openclaw/device-identity.js';
 import { assertApprovalsNotExposed } from './approval-exposure.js';
+
+const pkg = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+);
 
 /**
  * The roost state daemon.
@@ -86,6 +91,14 @@ async function main() {
     port: config.http.port,
     laptopLog,
     rendererConfig: config.renderer,
+    getStatus: () => ({
+      source: config.source,
+      version: pkg.version,
+      mqtt: {
+        connected: publisher.connected,
+        topic: config.mqtt.topic,
+      },
+    }),
     onLog: log,
     onRecorded: publishInstrument,
   });

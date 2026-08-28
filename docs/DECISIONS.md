@@ -398,3 +398,25 @@ existing token, so that is an approval step, not a rebuild.
 **What changes if wrong.** Re-pair. `scripts/pair-openclaw.mjs` is idempotent and
 refuses to run twice; deleting the device file forces a fresh identity and a new
 pairing request.
+
+---
+
+## D-013 — Loopback health probing uses `/status` with an explicit allowlist
+
+**Decision.** The daemon serves `GET /status` for health checks during the M3
+restart/health contract work. The handler reports only a small allowlist of
+loopback-safe fields: `ok`, `pid`, `uptimeSec`, `startedAt`, `version`,
+`source`, and MQTT connectivity plus topic.
+
+**Why.** Something supervising or restarting roost needs a simple endpoint to
+poll, and the daemon already serves loopback HTTP for the renderer. The handler
+in `daemon/http.js` does not read daemon globals or config directly; instead,
+`startHttpServer()` accepts an injected `getStatus()` callback so the HTTP layer
+stays a thin adapter and tests can supply daemon-owned values without widening
+its responsibilities.
+
+**Security constraint.** The response deliberately does **not** mirror
+`rendererConfig` or any broader config object, because those carry secrets and
+deployment details the health contract does not need: broker username/password,
+broker host or URL, device tokens, paired scopes, and filesystem paths are all
+excluded on purpose. The contract is an allowlist, not a filtered dump.

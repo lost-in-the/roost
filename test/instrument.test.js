@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { request } from 'node:http';
 import mqtt from 'mqtt';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -17,6 +18,22 @@ const scratch = () => {
   const dir = mkdtempSync(join(tmpdir(), 'roost-instr-'));
   return { dir, path: join(dir, 'laptop-opens.log'), cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 };
+
+function requestOverSocket({ socketPath, path, method = 'GET' }) {
+  return new Promise((resolve, reject) => {
+    const req = request({ socketPath, path, method }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => resolve({
+        status: res.statusCode,
+        headers: res.headers,
+        body: Buffer.concat(chunks).toString('utf8'),
+      }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
 
 // ---- payload shape --------------------------------------------------------
 
@@ -107,14 +124,16 @@ test('nothing is published while disconnected', () => {
 test('recording a tap notifies the caller so it can republish the count', async () => {
   const s = scratch();
   const published = [];
+  const socketPath = join(s.dir, 'roost.sock');
   const server = await startHttpServer({
     host: '127.0.0.1', port: 0,
+    socketPath,
     laptopLog: new LaptopLog({ path: s.path }),
     rendererConfig: {},
     onRecorded: (payload) => published.push(payload),
   });
   try {
-    await fetch(`http://127.0.0.1:${server.port}/api/laptop-open`, { method: 'POST' });
+    await requestOverSocket({ socketPath: server.socketPath, path: '/api/laptop-open', method: 'POST' });
     assert.equal(published.length, 1, 'a tap must trigger exactly one republish');
     assert.equal(published[0].count, 1);
     assert.equal(published[0].v, 1);
@@ -124,27 +143,31 @@ test('recording a tap notifies the caller so it can republish the count', async 
 test('reading the counter does not trigger a republish', async () => {
   const s = scratch();
   const published = [];
+  const socketPath = join(s.dir, 'roost.sock');
   const server = await startHttpServer({
     host: '127.0.0.1', port: 0,
+    socketPath,
     laptopLog: new LaptopLog({ path: s.path }),
     rendererConfig: {},
     onRecorded: (payload) => published.push(payload),
   });
   try {
-    await fetch(`http://127.0.0.1:${server.port}/api/laptop-open`);
+    await requestOverSocket({ socketPath: server.socketPath, path: '/api/laptop-open' });
     assert.equal(published.length, 0);
   } finally { await server.close(); s.cleanup(); }
 });
 
 test('the renderer is told which topic carries the counter', async () => {
   const s = scratch();
+  const socketPath = join(s.dir, 'roost.sock');
   const server = await startHttpServer({
     host: '127.0.0.1', port: 0,
+    socketPath,
     laptopLog: new LaptopLog({ path: s.path }),
     rendererConfig: { instrumentTopic: INSTRUMENT_TOPIC },
   });
   try {
-    const cfg = await (await fetch(`http://127.0.0.1:${server.port}/api/config`)).json();
+    const cfg = JSON.parse((await requestOverSocket({ socketPath: server.socketPath, path: '/api/config' })).body);
     assert.equal(cfg.instrumentTopic, INSTRUMENT_TOPIC);
   } finally { await server.close(); s.cleanup(); }
 });
