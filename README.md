@@ -31,7 +31,7 @@ all out of scope.
 
 | | |
 |---|---|
-| State contract, daemon, renderer | working, 259 tests |
+| State contract, daemon, renderer | working, 267 tests |
 | Hyprland output pinning | working, verified on the physical panel |
 | Physical panel | connected and live, 1024×600 on `HDMI-A-1` |
 | OpenClaw integration | Labby presence working; separate Labby/Omar identities paired with `operator.read` + `operator.approvals`; dual-Gateway daemon not built |

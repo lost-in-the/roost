@@ -470,7 +470,9 @@ gateway event caused a fresh snapshot and the panel immediately returned idle.
 **What changes if wrong.** Tune `ROOST`-side timing, or remove the trailing
 re-check if a future gateway release guarantees a terminal session event after
 every final write. The aggregation contract and renderer do not change.
-||||||| parent of 7a6f019 (Record the 2026-08-27 dual-Gateway approval spike (D-015))
+
+---
+
 ## D-015 — Dual Gateways use sanitized session approvals, not raw approval events
 
 **Decision.** M2 connects to Labby and Omar simultaneously with separate paired
