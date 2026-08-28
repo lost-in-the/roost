@@ -115,7 +115,9 @@ test('the refusal names both ways out, not just one', () => {
   const problem = approvalExposureError({ host: '198.51.100.9', scopes: APPROVALS });
   assert.match(problem, /ROOST_HTTP_HOST/, 'names the variable to change');
   assert.match(problem, /127\.0\.0\.1/, 'names the safe value');
-  assert.match(problem, /--scopes operator\.read/, 'names the way to drop the scope instead');
+  assert.match(problem, /revoke/, 'names the source-side revocation step');
+  assert.match(problem, /delete/, 'names the local credential deletion step');
+  assert.match(problem, /re-pair/, 'names the way to mint a reduced-scope identity');
 });
 
 test('the refusal quotes the offending host, so the message is actionable', () => {

@@ -31,10 +31,10 @@ all out of scope.
 
 | | |
 |---|---|
-| State contract, daemon, renderer | working, 155 tests |
+| State contract, daemon, renderer | working, 259 tests |
 | Hyprland output pinning | working, verified on the physical panel |
 | Physical panel | connected and live, 1024×600 on `HDMI-A-1` |
-| OpenClaw integration | working, paired device scoped `operator.read` |
+| OpenClaw integration | Labby presence working; separate Labby/Omar identities paired with `operator.read` + `operator.approvals`; dual-Gateway daemon not built |
 | `stalled` detection | **not mapped yet** — see [`docs/DECISIONS.md`](docs/DECISIONS.md) D-001 |
 | Touch | working — bound to the panel output, see [`config/hypr/roost.lua`](config/hypr/roost.lua) |
 
@@ -203,54 +203,78 @@ roost reads agent presence from the OpenClaw gateway as a **paired device**, not
 by borrowing the gateway's shared token. Pair once:
 
 ```sh
-sudo -n cat /var/lib/labby/credentials/gateway-token | node scripts/pair-openclaw.mjs
+sudo -n cat /var/lib/labby/credentials/gateway-token | node scripts/pair-openclaw.mjs --gateway labby
 ROOST_SOURCE=openclaw npm start
 ```
 
-The shared token is read on stdin, used once for bootstrap authentication, and
-written nowhere. What roost keeps is its own device token, scoped
-`operator.read` and nothing more, stored 0600 beside the Ed25519 key it is bound
-to in `~/.local/state/roost/openclaw-device.json`.
+The shared token is read on stdin, used only for bootstrap authentication, and
+written nowhere. Pairing defaults to `operator.read`. The live Labby and Omar
+Roost identities now each hold exactly `operator.read` plus
+`operator.approvals`, stored with their Ed25519 keys in separate 0600 files:
+`openclaw-device.json` and `openclaw-omar-device.json`.
 
-That scope is exactly what a presence panel needs — `sessions.list`,
-`sessions.subscribe`, read-only events. roost cannot start a run, send a
-message, or answer an approval. Revoke it on its own, without disturbing any
-other paired client:
+`operator.read` is sufficient for M1 presence. `operator.approvals`
+additionally authorizes resolving pending approvals, although the production
+daemon still connects only to Labby and has no approval route yet. Pairing Omar
+does not make the daemon dual-Gateway; M2 must wire that second connection
+explicitly.
+
+Revoke each identity only through its source Gateway:
 
 ```sh
-openclaw devices revoke --device <id> --role operator
+# Labby
+sudo -n -u labby env HOME=/var/lib/labby \
+  PATH=/opt/labby/runtime/node_modules/.bin:/usr/bin \
+  /usr/bin/bash -c 'export OPENCLAW_GATEWAY_TOKEN="$(</var/lib/labby/credentials/gateway-token)"; exec /usr/bin/node /opt/labby/runtime/node_modules/openclaw/openclaw.mjs --profile labby devices revoke --device "$1" --role operator' bash <device-id>
+
+# Omar
+/opt/omar/bin/openclaw-omar-admin oo devices revoke --device <device-id> --role operator
 ```
 
-The token is **not** kept in a password manager. It is useless without the local
-private key, so a vault would hold half a credential; recovery is re-pairing,
-which is the one command above.
+These machine-bound credentials are not stored in a password manager. Recovery
+is source-local re-pairing.
 
-### Widening the scope later
+### Adding approval authority on both Gateways
 
-M2 (touch approvals) needs `operator.approvals` on top of the read scope. Ask
-for it with `--scopes`:
+M2 uses two independent paired identities: upgrade the existing Labby identity
+and create a separate Omar identity with its own device file. Never reuse either
+identity or token against the other Gateway. `--gateway` is mandatory and maps
+the fixed URL, device file, and printed approval command; unknown aliases are
+refused. See D-015.
+
+For the existing Labby identity, ask for `operator.approvals` on top of the read
+scope with `--scopes`:
 
 ```sh
 sudo -n cat /var/lib/labby/credentials/gateway-token \
-  | node scripts/pair-openclaw.mjs --scopes operator.read,operator.approvals
+  | node scripts/pair-openclaw.mjs --gateway labby --scopes operator.read,operator.approvals
 ```
 
-Run against an already-paired roost this is a **scope upgrade, not a re-pair**.
-The Ed25519 identity is reused, so roost stays the same device and the existing
-pairing is not orphaned. The gateway raises a new request id that a human must
-approve — a scope upgrade can never widen a token silently.
+Pair Omar separately:
+
+```sh
+sudo -n cat /var/lib/omar/credentials/gateway-token \
+  | node scripts/pair-openclaw.mjs --gateway omar --scopes operator.read,operator.approvals
+```
+
+Running against an already-paired identity performs a scope upgrade while
+retaining its Ed25519 identity. In the pinned local Gateways, the shared token
+auto-approved both the Labby scope upgrade and Omar's fresh pairing; neither
+operation produced a human pairing request. Treat read access to a Gateway's
+shared token as authority to mint `operator.approvals`. The script still
+handles and prints a source-local approval command if a future Gateway returns
+`PAIRING_REQUIRED`.
 
 Two things it will not do:
 
-- **It never records a scope it was not granted.** An approver can grant less
-  than was asked for; roost stores what `hello-ok` negotiated and prints what
-  was withheld.
+- **It never records a scope it was not granted.** Roost stores what `hello-ok`
+  negotiated and prints any requested scope the Gateway withheld.
 - **It never drops a scope you already hold.** The connect frame requests the
   union, because the gateway negotiates exactly what it is asked for and a bare
   `--scopes operator.approvals` would cost roost its `operator.read`.
 
-The daemon picks the change up on its own: `daemon/openclaw/connect.js` connects
-with whatever scopes the device file records.
+The current daemon picks up Labby's stored scopes automatically. Omar's
+separate device file is not used until M2 adds the second Gateway connection.
 
 > **Scope is authority, and it is broader than roost.** On OpenClaw
 > 2026.7.2-beta.7, an approval carrying no explicit reviewer device list is
@@ -266,10 +290,12 @@ with whatever scopes the device file records.
 > the scope is granted rather than waiting for M2's route to be written and for
 > whoever writes it to remember to attach a guard.
 >
-> If it refuses, the message names both ways out: bind back to loopback, or
-> re-pair with `--scopes operator.read` and drop the authority. Exposing the HTTP
-> server is still allowed on its own — it only becomes a refusal once approval
-> authority is sitting behind it.
+> If it refuses, either bind back to loopback or revoke the identity through
+> its source Gateway, delete its device file, and re-pair with
+> `operator.read`. Merely rerunning the pairing script cannot downgrade scopes
+> because it deliberately preserves their union. Exposing the HTTP server is
+> still allowed on its own — it only becomes a refusal once approval authority
+> is sitting behind it.
 
 roost subscribes rather than polls. Nothing is queued for a disconnected client,
 so every reconnect re-subscribes and takes a fresh full snapshot.
@@ -335,7 +361,7 @@ scripts/            install, derive-monitor, launch-panel, dev-broker
 docs/               decisions and the original plans
 ```
 
-`npm test` runs 155 tests with Node's built-in runner. Aggregation and the log are
+`npm test` runs 259 tests with Node's built-in runner. Aggregation and the log are
 tested as pure units; the publisher is tested against a **real** in-process
 broker, including cutting sockets to prove the Last Will fires and reconnection
 continues.

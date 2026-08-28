@@ -6,7 +6,7 @@
  * never appears in argv, in shell history, or in a process listing:
  *
  *   sudo -n cat /var/lib/labby/credentials/gateway-token \
- *     | node scripts/pair-openclaw.mjs
+ *     | node scripts/pair-openclaw.mjs --gateway labby
  *
  * The run leaves behind ONE thing: roost's own device token, scoped
  * `operator.read` by default, stored 0600 next to the Ed25519 key it is bound
@@ -16,20 +16,20 @@
  * `operator.approvals` on top of the read scope:
  *
  *   sudo -n cat /var/lib/labby/credentials/gateway-token \
- *     | node scripts/pair-openclaw.mjs --scopes operator.read,operator.approvals
+ *     | node scripts/pair-openclaw.mjs --gateway labby --scopes operator.read,operator.approvals
  *
  * Running that against an ALREADY-PAIRED roost performs a scope upgrade rather
  * than refusing. The Ed25519 identity is reused, so this stays the same device
- * to the gateway and the old pairing is not orphaned. Per the installed
- * openclaw package, docs/gateway/clients.md: "Scope or role upgrades create a
- * new pending pairing request." So an upgrade needs a fresh human approval,
- * exactly like first pairing — it never widens the token silently.
+ * to the gateway and the old pairing is not orphaned. Live local pairing on
+ * 2026-08-27 auto-approved both a Labby scope upgrade and Omar's fresh identity
+ * when the shared Gateway token was supplied. Treat possession and use of that
+ * token as the authorization step; do not expect a separate human prompt.
  *
  * While pairing is pending this prints a request id. Approve it on the host:
  *
- *   sudo -u labby env HOME=/var/lib/labby PATH=/opt/labby/runtime/node_modules/.bin:/usr/bin \
- *     node /opt/labby/runtime/node_modules/openclaw/openclaw.mjs \
- *     --profile labby devices approve <requestId>
+ * The printed approval command is selected by the required --gateway alias.
+ * Device identities, URLs, and approval commands are never shared across
+ * Gateways.
  *
  * It keeps reconnecting until approved, which is what the protocol spec asks
  * for (PAIRING_REQUIRED is retryable with recommendedNextStep wait_then_retry).
@@ -41,10 +41,13 @@ import { GatewayClient } from '@openclaw/gateway-client';
 import { loadOrCreateDeviceIdentity, readDeviceToken, saveDeviceToken } from '../daemon/openclaw/device-identity.js';
 import { pairDevice } from '../daemon/openclaw/pairing.js';
 import { mergeScopes, missingScopes, scopesFromArgv } from '../daemon/openclaw/scopes.js';
+import {
+  approvalCommand,
+  gatewayAliasFromArgv,
+  resolveGatewayTarget,
+} from '../daemon/openclaw/gateway-targets.js';
 
 const stateHome = process.env.XDG_STATE_HOME || join(homedir(), '.local', 'state');
-const DEVICE_FILE = process.env.ROOST_OPENCLAW_DEVICE_FILE || join(stateHome, 'roost', 'openclaw-device.json');
-const URL = process.env.ROOST_OPENCLAW_URL || 'ws://127.0.0.1:19789';
 
 const log = (...a) => console.error('[pair-openclaw]', ...a);
 
@@ -54,10 +57,23 @@ async function readStdin() {
   return Buffer.concat(chunks).toString('utf8').trim();
 }
 
-const requested = scopesFromArgv(process.argv.slice(2));
+const argv = process.argv.slice(2);
+let gatewayAlias;
+let target;
+try {
+  gatewayAlias = gatewayAliasFromArgv(argv);
+  target = resolveGatewayTarget(gatewayAlias, stateHome);
+} catch (err) {
+  log(err.message);
+  log('usage: node scripts/pair-openclaw.mjs --gateway labby|omar [--scopes operator.read,operator.approvals]');
+  process.exit(1);
+}
+
+const { deviceFile: DEVICE_FILE, url: URL } = target;
+const requested = scopesFromArgv(argv);
 if (requested === null) {
   log('--scopes was given with no value.');
-  log('usage: node scripts/pair-openclaw.mjs --scopes operator.read,operator.approvals');
+  log('usage: node scripts/pair-openclaw.mjs --gateway labby|omar --scopes operator.read,operator.approvals');
   process.exit(1);
 }
 
@@ -73,20 +89,21 @@ if (existing) {
   if (missing.length === 0) {
     log(`already paired; device token present with scopes [${existing.scopes.join(', ')}]`);
     log('the requested scopes are already covered. nothing to do.');
-    log(`delete ${DEVICE_FILE} to force a full re-pair (this creates a NEW device identity).`);
+    log('to replace or reduce this identity, revoke it through its source Gateway, then delete its device file and re-pair; see README "Connecting to OpenClaw".');
     process.exit(0);
   }
   scopes = mergeScopes(existing.scopes, requested);
   log(`already paired with scopes [${existing.scopes.join(', ')}]`);
   log(`scope upgrade: adding [${missing.join(', ')}]`);
   log(`requesting [${scopes.join(', ')}] on the EXISTING device identity`);
-  log('this raises a new pairing request that a human must approve.');
+  log('the shared Gateway token may auto-approve this upgrade; if pairing is required, the source-local approval command will be printed.');
 }
 
 const gatewayToken = await readStdin();
 if (!gatewayToken) {
   log('no gateway token on stdin.');
-  log('usage: sudo -n cat /var/lib/labby/credentials/gateway-token | node scripts/pair-openclaw.mjs');
+  log(`no ${gatewayAlias} gateway token on stdin.`);
+  log(`usage: <${gatewayAlias} gateway token on stdin> | node scripts/pair-openclaw.mjs --gateway ${gatewayAlias}`);
   process.exit(1);
 }
 
@@ -105,15 +122,13 @@ try {
       log('');
       log(`APPROVAL NEEDED. request id: ${requestId}`);
       log('run this on the host, then leave this process running:');
-      log(`  sudo -u labby env HOME=/var/lib/labby PATH=/opt/labby/runtime/node_modules/.bin:/usr/bin \\`);
-      log(`    node /opt/labby/runtime/node_modules/openclaw/openclaw.mjs \\`);
-      log(`    --profile labby devices approve ${requestId}`);
+      log(`  ${approvalCommand(target, requestId)}`);
       log('');
     },
   });
 
-  // Record what the gateway NEGOTIATED, never what was requested. An approver
-  // can grant a narrower set than was asked for, and a roost that believed the
+  // Record what the gateway NEGOTIATED, never what was requested. The gateway
+  // can return a narrower set than was asked for, and a roost that believed the
   // wider set would fail later with an authorization error that reads like a
   // daemon bug rather than a pairing decision.
   saveDeviceToken(DEVICE_FILE, deviceToken, negotiated);

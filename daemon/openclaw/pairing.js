@@ -1,30 +1,21 @@
 /**
  * One-shot device pairing against the OpenClaw gateway.
  *
- * The flow is the one documented in the installed openclaw package,
- * docs/gateway/clients.md, "Choose scopes and pair the device":
- *
- *   1. connect with the Ed25519 device identity + the SHARED gateway token
- *      (bootstrap auth only)
- *   2. the gateway answers PAIRING_REQUIRED with a request id
- *   3. a human runs `openclaw devices approve <requestId>` on the host
- *   4. the client reconnects and hello-ok carries auth.deviceToken
- *
- * Step 2 is retryable by design: the protocol spec says to keep reconnecting
- * with the same bootstrap token until the request is approved. The real
- * GatewayClient reconnects on its own, so this waits rather than giving up,
- * and reports the request id exactly once per distinct id so the caller can
- * tell the human what to approve.
+ * Connect with the Ed25519 identity and shared Gateway token. The Gateway may
+ * return `hello-ok` with a device token immediately, as both pinned local
+ * Gateways did on 2026-08-27. If it instead returns `PAIRING_REQUIRED`, report
+ * the request id and keep reconnecting until the source-local approval occurs.
  *
  * The shared gateway token is used ONCE, here. Everything afterwards uses the minted
  * device token, which is scoped and independently revocable.
  *
- * This same flow performs a SCOPE UPGRADE. Reconnecting the existing device
- * identity with a wider `scopes` set raises another PAIRING_REQUIRED and a
- * fresh request id, because per docs/gateway/clients.md "Scope or role
- * upgrades create a new pending pairing request." Reusing the identity is what
- * makes it an upgrade rather than a second device: a new keypair would orphan
- * the approved pairing and leave a stale entry behind on the gateway.
+ * This flow also performs a scope upgrade. On 2026-08-27 the pinned local
+ * Gateways auto-approved both an existing Labby identity's wider scopes and a
+ * fresh Omar identity when authenticated with the shared Gateway token. Keep
+ * the PAIRING_REQUIRED retry path for endpoints that require it, but do not
+ * assume a human approval is guaranteed. Reusing the identity is what makes it
+ * an upgrade rather than a second device: a new keypair would orphan the
+ * approved pairing and leave a stale entry behind on the gateway.
  */
 
 import { deviceSigningDeps } from './ed25519.js';

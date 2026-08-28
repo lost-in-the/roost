@@ -357,9 +357,10 @@ and the daemon has no idea it exists.
 ## D-012 — roost holds its own device token, stored locally, not the shared gateway token in 1Password
 
 **Decision.** roost pairs with the OpenClaw gateway as a **device** and keeps the
-token that pairing mints, scoped `operator.read`. That token lives at
-`~/.local/state/roost/openclaw-device.json`, mode 0600, beside the Ed25519
-private key it is bound to. It is **not** stored in 1Password.
+token that pairing mints. M1 initially granted only `operator.read`; D-015 later
+adds `operator.approvals` to the separate Labby and Omar identities. The Labby
+token lives at `~/.local/state/roost/openclaw-device.json`, mode 0600, beside
+the Ed25519 private key it is bound to. It is **not** stored in 1Password.
 
 **Why not the shared gateway token.** The obvious route was to copy
 `/var/lib/labby/credentials/gateway-token` into the Homelab vault and reference
@@ -391,15 +392,26 @@ process listing. It is written nowhere.
 
 **Scope.** `operator.read` covers `sessions.list`, `sessions.subscribe` and
 read-only events, and nothing else — roost cannot start a run, send a message or
-answer an approval. M2 needs `operator.approvals`; per the gateway docs a scope
-upgrade raises a **fresh pairing request** rather than silently widening an
-existing token, so that is an approval step, not a rebuild.
+answer an approval. M2 needs `operator.approvals`. Live local pairing on
+2026-08-27 auto-approved both Labby's scope upgrade and Omar's fresh identity
+when the shared Gateway token was supplied. The explicit, owner-authorized use
+of that token is the approval step; the runtime does not add a second human
+prompt. The shared token is therefore authority to mint approval-resolution
+scope, not merely a way to begin a separately approved pairing.
 
-**What changes if wrong.** Re-pair. `scripts/pair-openclaw.mjs` is idempotent and
-refuses to run twice; deleting the device file forces a fresh identity and a new
-pairing request.
+D-015 expands this single-Labby decision for M2: Omar receives a separate
+paired identity; no token, reviewer grant, or approval authority is shared
+between Gateways.
+
+**What changes if wrong.** Re-pair. `scripts/pair-openclaw.mjs` is idempotent:
+when the requested scopes are already covered it exits without changing the
+credential. To replace or reduce an identity's authority, revoke it through its
+source Gateway, delete that identity's device file, and pair again with the
+intended scopes. The pinned local Gateway may auto-approve the replacement when
+its shared token is supplied.
 
 ---
+
 
 ## D-013 — Loopback health probing uses `/status` with an explicit allowlist
 
@@ -458,3 +470,73 @@ gateway event caused a fresh snapshot and the panel immediately returned idle.
 **What changes if wrong.** Tune `ROOST`-side timing, or remove the trailing
 re-check if a future gateway release guarantees a terminal session event after
 every final write. The aggregation contract and renderer do not change.
+||||||| parent of 7a6f019 (Record the 2026-08-27 dual-Gateway approval spike (D-015))
+## D-015 — Dual Gateways use sanitized session approvals, not raw approval events
+
+**Decision.** M2 connects to Labby and Omar simultaneously with separate paired
+device identities. Each connection subscribes to exact sessions using
+`sessions.messages.subscribe` with `includeApprovals: true`, consumes the
+authoritative `approvalReplay` plus `session.approval` lifecycle events, and
+answers through the unified `approval.resolve` method on that approval's source
+Gateway. No reviewer identity, owner grant, or approval authority is transferred
+between Gateways; the merged view is presentation only.
+
+**Why.** The raw `exec.approval.*` and `plugin.approval.*` APIs preserved by the
+pinned OpenClaw runtime can carry commands, paths, patches, and prompts. The
+session projection is reviewer-safe, includes terminal first-answer truth, and
+has reconnect replay tied to the exact session audience. One connection cannot
+serve both Gateways: the device token and identity are Gateway-specific, and
+Roost's current source replaces its complete snapshot on every emission.
+Reviewer-safe does not mean persistence-safe: the projection can contain
+sanitized command text and explicit session routing keys. Roost derives its
+bounded label in memory and never publishes or stores the complete
+presentation.
+
+**Rejected.** Repointing the existing Labby connection to Omar would silently
+drop Labby. Polling raw `.list` methods would duplicate lifecycle/race logic and
+cross the payload-redaction boundary. A notification-only slice would still
+leave approvals unavailable elsewhere unanswered, so it cannot complete M2.
+Native `/codex bind` approvals are also rejected as an input: the pinned Codex
+plugin creates no Gateway approval record for them.
+
+**Gate before implementation.** A deliberately mutating, owner-authorized live
+spike must prove session audience, replay, expiry, reconnect, and resolution on
+both Gateways. It must also determine whether merely subscribing makes Roost an
+available approval route. No legacy delivery capability may be advertised
+until the decision handler is ready and its routing effect is measured.
+
+**Gate result, 2026-08-27: partial pass; implementation remains stopped.** The
+final, separate Roost identities were paired to Labby and Omar with only
+`operator.read` and `operator.approvals`. Claude-native plugin approvals on both
+Gateways passed pending events, reconnect replay, source-local terminal events,
+120-second expiry, and canonical first-answer behavior. Two simultaneous
+reviewers returned `applied: true` and then `applied: false` with the same
+terminal decision. No legacy approval-delivery capability was required for
+those requests, so the production client must not advertise one merely because
+the spike harness can.
+
+The required Omar Codex ACP/harness class did not pass. A headless
+`omar-codex` turn without an initiating channel denied without creating a
+Gateway approval record. Repeating with the spike client advertising the
+legacy `approvals` capability did not change that result. Supplying Discord as
+the initiating channel reached Codex `exec_command`, but the native PreToolUse
+hook failed closed with its relay unavailable; again there was no
+`session.approval` event or replay row. This agrees with the existing native
+`/codex bind` exclusion at the observable boundary: Roost cannot resolve an
+approval that the harness never emits.
+
+Both identity operations were auto-approved through their source-local shared
+Gateway tokens. This is an accepted residual risk for the owner-authorized
+spike, but human pairing approval must not be treated as a second containment
+boundary.
+
+The spike did not disable the live Discord approval route merely to prove that
+subscription alone keeps a request pending. Therefore it establishes that an
+exact-session subscription is sufficient to observe and resolve the live
+Claude-native class, not that it is itself the only delivery route. Disabling a
+working production approval route is not a prerequisite for M2.
+
+**What changes if wrong.** If a required Labby or Omar request has no safe
+session audience, stop and document the missing runtime projection. Do not
+silently fall back to raw events; that would require a new decision with a
+separate redaction and authorization review.

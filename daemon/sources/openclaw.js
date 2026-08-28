@@ -7,9 +7,10 @@ import { mapSessionsToAgents } from '../openclaw/map-sessions.js';
 /**
  * OpenClawStateSource — agent presence, read from the OpenClaw gateway.
  *
- * Connects as a paired operator device scoped `operator.read` and nothing more.
- * Pair once with scripts/pair-openclaw.mjs; the device token it mints lives
- * beside its keypair in ~/.local/state/roost/openclaw-device.json.
+ * Connects as the Labby paired operator device. Its live credential now holds
+ * `operator.read` plus `operator.approvals`, but this M1 source implements only
+ * read-only presence calls and no approval route. The device token lives beside
+ * its keypair in ~/.local/state/roost/openclaw-device.json.
  *
  * PUSH, NOT POLL. The gateway broadcasts session changes, and its own client
  * guide (docs/gateway/clients.md) says to subscribe rather than poll. Nothing

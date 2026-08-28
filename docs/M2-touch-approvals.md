@@ -1,8 +1,11 @@
 # M2 — Touch approvals: design note
 
-**Status:** building. Written 2026-08-21, immediately after M1 shipped, while the
-reasoning was fresh; the 2026-08-23 hardware blocker is resolved, and so is the
-§6 gateway dependency — roost is paired and reading live agent state.
+**Status:** protocol spike completed 2026-08-27; Claude-native approvals passed
+on both Gateways, but the required Omar Codex ACP/harness projection failed, so
+feature implementation remains stopped pending a scope decision or runtime
+fix. Written 2026-08-21, immediately after M1 shipped, while the reasoning was
+fresh. The 2026-08-23 hardware blocker is resolved. Homelab backlog 128 calls
+this work M3; this repository retains the original Roost milestone name, M2.
 
 Built so far, in the order §8 required:
 
@@ -44,9 +47,11 @@ Verified end to end: three taps on the `lc-corner` button drove the counter
 0→1→2→3 through `POST /api/laptop-open`. **So the tap path in §3 is proven on
 real glass**, which was the part of this design that could not be tested before.
 
-§6's gateway dependency is also resolved: roost is paired and reading live agent
-state. What M2 still needs is the approvals scope (`operator.approvals`), which
-raises a fresh pairing request rather than silently widening the existing token.
+Labby presence remains the sole production connection. The Labby scope upgrade,
+separate Omar pairing, and owner-authorized protocol spike are complete, but
+pairing alone does not make Roost dual-Gateway. §6 remains blocked on the
+missing Codex projection; implementation must wire the two existing identities
+only after that scope decision or runtime repair.
 
 ---
 
@@ -57,7 +62,7 @@ More than you might expect. The contract was designed with this in mind.
 | Already there | Why it matters here |
 |---|---|
 | `state: needs_attention` | A distinct, persistent, deliberately loud state. Already the only state permitted to be loud. |
-| **`primary_run_id`** | The handle for answering **one specific run**, not "whatever is on screen". This is the field that makes approvals possible at all. |
+| **`primary_run_id`** | Correlates visible panel state with one run. It is not an approval handle: resolution uses the approval id and kind through the same Gateway connection that emitted it. |
 | `urgency: blocking` | Already separates "needs a decision from you" from "worth a glance". |
 | The daemon's loopback HTTP server | A return path already exists and is already trusted. See §3. |
 | `data-stale` on the renderer root | Free kill switch for the buttons. See §4.4 — this one matters more than it looks. |
@@ -248,90 +253,194 @@ The Stream Deck keeps working untouched throughout. Do not modify it.
 
 ---
 
-## 6. ⚠ The dependency that gates everything
+## 6. ⚠ The protocol gate — revised against the pinned runtime
 
-**M2 cannot be finished until the OpenClaw mechanism is resolved** — see
-`DECISIONS.md` D-001, still open because OpenClaw is not installed on this
-machine.
+The 2026-08-22 conclusion was right that Roost must be a persistent Gateway
+client and wrong about which approval projection a new client should consume.
+The raw `exec.approval.*` and `plugin.approval.*` events are compatibility APIs.
+They can carry full commands, paths, patches, and prompts, and their list/event
+visibility depends on requester and reviewer bindings.
 
-Approvals ask **more** of that interface than M1 does:
+OpenClaw **2026.7.2-beta.7** now provides the safer operator surface:
 
-| | M1 | M2 |
+- Subscribe to an exact session with
+  `sessions.messages.subscribe { key, agentId?, includeApprovals: true }`.
+- Replace the local pending set from the response's authoritative
+  `approvalReplay` whenever `truncated` is false.
+- Apply later sanitized `session.approval` pending and terminal events.
+- Answer through `approval.resolve { id, kind, decision }` and trust the
+  returned canonical approval, including when another surface answered first.
+
+The projection omits raw request objects and reviewer-device bindings, but it
+is not content-free. `session.approval` carries `sessionKey` and sometimes
+`sourceSessionKey`; `approval.presentation` may carry sanitized command text,
+title, description, or detail. Treat the complete projection as sensitive:
+route it only through the owning Gateway connection plus its local alias,
+derive the 64-character panel label in memory, and never persist the full
+presentation to logs, MQTT, browser state, or fixtures. Subscribing remains
+observational and does not append transcript rows or wake an agent. Roost must
+not consume or log the legacy raw approval event families unless a separate
+review proves that a required request has no session audience.
+
+### Two gateways are part of the minimum
+
+Roost currently has one Gateway URL, one device identity, and one complete
+source snapshot. Repointing it from Labby (`127.0.0.1:19789`) to Omar
+(`127.0.0.1:19791`) would silently remove Labby. M2 therefore requires:
+
+| Gateway | Device identity | Required behavior |
 |---|---|---|
-| Needs | OpenClaw to **push** state out | OpenClaw to **accept** an answer in |
-| Hooks | Sufficient | Probably not — a hook can fire on an event, but does not obviously give you a way to hand a decision back |
-| Consequence | — | May force the gateway/API option, even though it lost on latency for reads |
+| Labby | Existing identity retained and scope-upgraded | Presence plus authorized session approvals |
+| Omar | New, separate identity | Presence plus authorized session approvals |
 
-> ### ✅ RESOLVED 2026-08-22 — it is the gateway client, and the socket is a trap
->
-> Investigated against a live OpenClaw **2026.7.2-beta.7** runtime on the same machine roost runs on.
-> The dependency above is settled; §6 no longer gates M2.
->
-> **Build a gateway operator client. Do not build a socket responder.**
->
-> There is an `exec-approvals.sock` path in the approvals config, and it looks exactly like the
-> answer: OpenClaw connects as the client, the responder binds, one JSONL line each way
-> (`{"type":"request",token,id,request}` → `{"type":"decision",decision}`). **It is dead code in this
-> release.** `requestExecApprovalViaSocket` has *zero* call sites — four files mention it, being the
-> definition plus three re-export barrels, one of them a `.d.ts`. No socket file exists on disk. The
-> path *is* consumed, but by `requestExecHostViaSocket`, a different protocol gated on
-> `platform === "darwin"`: it is the Mac companion **exec transport**, not an approval responder.
-> The name is a red herring and would cost you the milestone.
->
-> **The real surface**, both verified live:
->
-> | Flow | Methods |
-> |---|---|
-> | Claude-native tools (Bash, Read, …) | `plugin.approval.request` → `plugin.approval.waitDecision` / `.list` / `.resolve` |
-> | OpenClaw's own exec tool | `exec.approval.request` / `.waitDecision` / `.resolve`, broadcast as `exec.approval.requested` |
->
-> Answer both; they are different agents' paths. Demonstrated end to end: a prompt was raised,
-> answered in a browser client, and resolved in **4944 ms**.
->
-> **Latency is no longer the objection it was.** The concern above assumed a remote gateway. The
-> local gateway is loopback on this same host, so the gateway/API option does not pay the cost that
-> made it lose for reads.
->
-> **Four constraints that change the design — read these before §2:**
->
-> 1. **An approval needs a *connected* client at the moment it is raised.** With none connected the
->    gateway returns no id and the call denies in ~5 s with reason `unavailable`. **Nothing is
->    queued**, and `approvals pending` stays empty. So roost must hold a persistent connection, not
->    poll. A roost outage means denials, not a backlog.
-> 2. **`Bash` can never earn allow-always.** The decision set is forced to `["allow-once","deny"]`
->    whenever the tool is `Bash`. Every single run prompts; roost cannot mint a durable grant, and
->    any UI affordance implying "always allow" would be lying.
-> 3. **Late-decision auto-answer must match on content, not ids.** An expired approval cannot be
->    re-opened — but a retry raises a *fresh* one, which is how "approve after the fact" is
->    achievable at all. `toolCallId` is regenerated per retry and there is no deterministic id on the
->    native path, so match on `agentId` + `toolName` + `detail` (which carries the compact command
->    JSON).
-> 4. **Timeouts:** 120 s default for a plugin approval (600 s max). Oversized Bash inputs are denied
->    outright *before* any prompt is raised, so some requests will never reach the panel.
->
-> Evidence and the fuller reasoning: `homelab` repo, `docs/open-questions-2026-08-22.md` Q3, and
-> backlog item 074.
+The daemon holds two connections and merges their complete projections.
+Gateway aliases qualify every session, run, and approval identifier. Loss of
+one connection marks only that Gateway's projection stale; it cannot erase or
+relabel the other. Neither device file may be reused against the other Gateway.
+No approval, reviewer identity, owner grant, or authorization claim crosses
+between Gateways: Roost resolves each approval only through the same connection
+that emitted it. The merge is a presentation projection, not federation or an
+approval bridge.
 
-**This is the only part that cannot be designed around now.** Everything in §2
-to §5 can be built and verified against the mock first, exactly as M1 was: extend
-`MockStateSource` to emit approval-shaped prompts, build the UI, wire the tap to
-the daemon, and stub the OpenClaw relay behind the same `StateSource`-style seam.
+Both paired devices require `operator.approvals` to opt into approval replay.
+That scope also grants approval-resolution authority; it is not an observe-only
+credential. The daemon must expose only the two reviewed decisions supported by
+this panel (`allow-once` and `deny`) and must continue refusing a non-loopback
+HTTP bind whenever either configured identity has approval authority.
 
-A working two-button prompt driven by a mock is a legitimate M2 milestone, for
-the same reason it was in M1.
+### Native Codex binding is explicitly out of scope
+
+The pinned Codex plugin declines interactive command/file approval requests in
+native `/codex bind` conversations. Those requests create no Gateway approval
+record, so Roost cannot observe or answer them. The missing Discord-button bug
+needs its own runtime fix; Roost must not claim to repair it.
+
+Codex ACP/harness requests were expected to become durable approvals, but the
+current Omar harness did not emit one: the live spike failed closed at the
+native PreToolUse relay before any `session.approval` existed. Treat this class
+as unsupported until the relay is repaired and the spike passes. For any future
+repaired path, classify provenance from the stable harness discriminator
+`pluginId == "openclaw-codex-app-server"`, never from titles or labels; raw
+payloads remain memory-only.
+
+### Mandatory owner-authorized protocol spike
+
+Feature implementation starts only after a live diagnostic proves the exact
+behavior on **both** Gateways. This is not read-only: pairing/scope upgrades,
+disposable writes, and approval decisions mutate live state and require an
+explicitly authorized window plus cleanup.
+
+`scripts/pair-openclaw.mjs` requires `--gateway labby|omar`, selects the fixed
+URL, distinct device file, and source-Gateway approval command from that alias,
+and refuses unknown or duplicate aliases. Never override those mappings during
+the spike.
+
+For each Gateway:
+
+1. Pair or scope-upgrade the final Roost-specific identity; do not create an
+   untracked throwaway credential.
+2. Subscribe to the intended session with `includeApprovals: true` before
+   raising a harmless request.
+3. Trigger one harmless read/no-prompt control, one disposable write prompt,
+   and one harmless command prompt through the actual runtime used there.
+4. Verify pending replay, terminal events, expiry, disconnect/reconnect, and
+   canonical first-answer behavior without recording raw payloads.
+5. Verify whether the subscription alone counts as an available approval route.
+   If a legacy approval-delivery capability is required to keep requests
+   pending, do not advertise it until Roost's resolver and failure handling are
+   ready; document the connected/disconnected routing change.
+6. On Omar, verify ACP/harness approvals appear and native `/codex bind`
+   remains absent. On Labby, verify Claude-native approvals acquire a durable,
+   authorized session audience. Stop if either required class cannot be
+   projected safely.
+
+The spike records only event family, safe presentation kind, offered decisions,
+timestamps, and redacted correlation identifiers. No commands, arguments,
+paths, patches, prompts, environment values, credentials, or raw JSON may be
+persisted.
+
+### Spike result — 2026-08-27
+
+The owner-authorized spike ran against the final paired identities, not
+throwaway credentials. Labby retained its identity; Omar received a distinct
+identity and device file. Both hold exactly `operator.read` and
+`operator.approvals`.
+
+| Probe | Labby | Omar |
+|---|---|---|
+| No-tool control | No approval projected | No approval projected |
+| Claude-native disposable write | Pending `plugin` projection; denied before execution | Pending `plugin` projection; denied before execution |
+| Disconnect/reconnect | Replay contained the same pending correlation | Replay contained the same pending correlation |
+| Source-local resolution | `applied: true`, then terminal denied | `applied: true`, then terminal denied |
+| Two-reviewer harmless command | Winner applied deny; loser returned the same canonical deny without applying | Winner applied deny; loser returned the same canonical deny without applying |
+| Unresolved harmless `printf` | Terminal expired at exactly 120 seconds | Terminal expired at exactly 120 seconds |
+
+The diagnostic emitted only the fields allowed by this section. Disposable
+markers were absent after every denied/expired run. It did not consume legacy
+raw approval events, and it did not log full presentations or session keys.
+
+The subscription used no delivery capability for the passing Claude-native
+probes. Because Discord's production approval route remained enabled, this
+proves the exact-session subscription can observe and resolve the request; it
+does not prove that the subscription alone is what kept it pending. The spike
+did not disable a working production route to manufacture that distinction.
+
+The required Codex class failed before the safe projection boundary:
+
+1. A headless `omar-codex` turn denied without emitting any Gateway approval.
+2. Advertising the legacy `approvals` capability on the Roost spike client did
+   not create a record.
+3. Marking the turn's initiating channel as Discord let Codex attempt
+   `exec_command`, but its native PreToolUse relay failed closed as unavailable.
+   No `session.approval` pending event or replay row appeared and no file was
+   written.
+
+This is a gate failure, not a reason to fall back to raw events. Choose one
+before implementation: explicitly narrow M2 to Claude-native approvals and keep
+Codex unsupported, or repair the Omar Codex native hook relay and rerun this
+class of the spike. Native `/codex bind` remains unsupported for the independent
+reason already stated above: it creates no Gateway approval record.
+
+### Reconnect and first-answer rules
+
+- Subscribe before declaring the source healthy. With `truncated: false`, the
+  replay replaces that session's pending set atomically.
+- With `truncated: true`, keep unseen local entries non-actionable until
+  canonical lookup or terminal events settle them.
+- Disable controls while either source is reconciling or stale.
+- Enforce `expiresAtMs` locally as a backstop and re-check immediately before
+  resolving.
+- Send one `approval.resolve`; never retry automatically after an ambiguous
+  transport failure. Freeze controls and reconcile instead.
+- Trust the returned canonical approval. If another surface won, display its
+  recorded terminal result rather than the local attempted decision.
+- Never auto-answer a new approval by matching its content to an expired one.
+  The old content-matching proposal is unsafe and is rejected.
+
+A notification-only slice may be built as an internal precursor, but it does
+not complete backlog 128 or M2 because it leaves the unavailable approval with
+no answering surface.
 
 ---
 
-## 7. Decide before building
+## 7. Build sequence after the spike passes
 
-1. **Which OpenClaw mechanism accepts an answer.** Gates everything. Read the
-   existing Stream Deck integration first, read-only, for how state gets out
-   today.
-2. **How a second answering surface (Home Assistant) authenticates.** §3.
-3. **Whether `reject` needs a reason.** Probably not on glass — a reason is
-   long-form content, which by §2 is a handoff.
-4. **Prompt timeout length**, and what OpenClaw does when nobody answers. This is
-   OpenClaw's policy, not the panel's, but the panel has to display the result.
+1. Add dual-Gateway configuration, separate device files, Gateway-qualified
+   identifiers, and a coordinator that merges complete source snapshots.
+2. Add sanitized approval replay/event projection and canonical resolution,
+   with no legacy raw payload crossing the projection boundary.
+3. Add the loopback POST route, idempotency/expiry checks, and first-answer
+   reconciliation.
+4. Add renderer controls: deny is one tap; allow-once follows the existing
+   reversible/second-confirm rule. Never offer `allow-always` in M2.
+5. Test each Gateway independently, simultaneous operation, collision cases,
+   stale/reconnect behavior, resolution elsewhere, ambiguous transport failure,
+   and payload absence from MQTT/log/browser state.
+6. Deploy only after the pairing/scope change and runtime configuration receive
+   separate approval.
+
+Home Assistant as a second answering surface and rejection reasons remain later
+decisions. They do not block the panel's first complete approval path.
 
 ## 8. Do not
 
@@ -339,6 +448,10 @@ the same reason it was in M1.
 - Let the renderer decide whether something is reversible. §4.1.
 - Give the browser a broker credential that can publish. §3.
 - Allow approvals while the panel is stale. §4.4.
+- Consume legacy raw approval events as normal application state. §6.
+- Reuse one Gateway device identity or unqualified session id across Labby and Omar. §6.
+- Claim that Roost can surface native `/codex bind` approvals. §6.
+- Auto-answer a retry by matching command or prompt content. §6.
 - Serve an approval route from a non-loopback `ROOST_HTTP_HOST`. Already enforced
   at startup by `daemon/approval-exposure.js`, which refuses the scope-plus-bind
   combination before anything listens — so the route does not need its own check,
@@ -348,11 +461,17 @@ the same reason it was in M1.
 ## 9. Definition of done, when it is built
 
 - [ ] A reversible prompt is approved from the panel and the run continues
+- [ ] Labby and Omar remain visible simultaneously through separate identities
+- [ ] A harmless approval from each Gateway is answered from the panel
+- [ ] Native `/codex bind` approvals remain absent and are documented as unsupported
 - [ ] A destructive prompt requires a deliberate second confirm
 - [ ] Answering the same prompt twice is rejected by the daemon, not the browser
 - [ ] Answering on the laptop makes the panel buttons disappear within 5 seconds
+- [ ] Another surface winning is shown from the canonical terminal record
+- [ ] Reconnecting replaces pending state from authoritative replay without resurrection
 - [ ] Blocking the broker for 35 seconds makes the buttons dead, not just stale-looking
 - [ ] A prompt past `expires_at` is dead with no new message required
 - [ ] A label that cannot be summarised in 64 characters becomes a phone handoff
       instead of an approvable prompt
 - [ ] The Stream Deck still works, unchanged and unmodified
+- [ ] MQTT, logs, fixtures, and browser state contain no raw approval payloads

@@ -98,7 +98,7 @@ export function approvalExposureError({ host, scopes }) {
     'in front of that.\n' +
     'Fix it either way round:\n' +
     '  - bind to loopback: unset ROOST_HTTP_HOST, or set it to 127.0.0.1\n' +
-    '  - or drop the scope: node scripts/pair-openclaw.mjs --scopes operator.read'
+    '  - or drop the scope: revoke this identity through its source Gateway, delete its device file, and re-pair with operator.read; see README "Connecting to OpenClaw"'
   );
 }
 
