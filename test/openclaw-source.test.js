@@ -29,10 +29,60 @@ function fakeGateway({ sessions = [] } = {}) {
 
 const settle = () => new Promise((r) => setTimeout(r, 10));
 
-const makeSource = (gw) => new OpenClawStateSource({
+function fakeTimers() {
+  let now = 0;
+  let nextId = 1;
+  const pending = new Map();
+  const fired = [];
+  return {
+    fired,
+    setTimeoutFn(fn, delay = 0) {
+      const handle = {
+        id: nextId++,
+        runAt: now + delay,
+        fn,
+        delay,
+        cleared: false,
+        unref() {},
+      };
+      pending.set(handle.id, handle);
+      return handle;
+    },
+    clearTimeoutFn(handle) {
+      if (!handle) return;
+      handle.cleared = true;
+      pending.delete(handle.id);
+    },
+    count(delay) {
+      return [...pending.values()].filter((timer) => timer.delay === delay).length;
+    },
+    async tick(ms) {
+      const target = now + ms;
+      while (true) {
+        const due = [...pending.values()]
+          .filter((timer) => timer.runAt <= target)
+          .sort((a, b) => a.runAt - b.runAt || a.id - b.id)[0];
+        if (!due) break;
+        pending.delete(due.id);
+        if (due.cleared) continue;
+        now = due.runAt;
+        fired.push(due.delay);
+        due.fn();
+        await Promise.resolve();
+        await Promise.resolve();
+      }
+      now = target;
+      await Promise.resolve();
+      await Promise.resolve();
+    },
+  };
+}
+
+const makeSource = (gw, overrides = {}) => new OpenClawStateSource({
   createClient: gw.create, url: 'ws://x', deviceToken: 'tok',
   deviceIdentity: { deviceId: 'd', privateKeyPem: 'p', publicKeyPem: 'q' },
   debounceMs: 0,
+  ...overrides,
 });
 
 test('emits the full agent set once connected, because aggregate needs the whole set', async () => {
@@ -76,6 +126,94 @@ test('re-snapshots when a session changes, so the panel follows live activity', 
 
   assert.equal(seen.length, 2, 'a change event must produce a fresh emission');
   assert.equal(seen[1][0].state, 'thinking');
+  source.stop();
+});
+
+test('a working snapshot schedules exactly one trailing re-snapshot and it fires', async () => {
+  const timers = fakeTimers();
+  const gw = fakeGateway({ sessions: [sess('a', true)] });
+  const source = makeSource(gw, { setTimeoutFn: timers.setTimeoutFn, clearTimeoutFn: timers.clearTimeoutFn });
+  const seen = [];
+  source.on('agents', (a) => seen.push(a));
+
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+
+  assert.equal(seen.length, 1);
+  assert.equal(timers.count(2000), 1, 'one trailing timer should be armed');
+
+  await timers.tick(2000);
+
+  assert.equal(seen.length, 2, 'the trailing timer should trigger one more snapshot');
+  assert.equal(timers.count(2000), 0, 'the trailing snapshot must not chain into another trailing timer');
+  source.stop();
+});
+
+test('an idle snapshot schedules no trailing or reconcile timers', async () => {
+  const timers = fakeTimers();
+  const gw = fakeGateway({ sessions: [sess('a', false)] });
+  const source = makeSource(gw, { setTimeoutFn: timers.setTimeoutFn, clearTimeoutFn: timers.clearTimeoutFn });
+
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+
+  assert.equal(timers.count(2000), 0);
+  assert.equal(timers.count(60000), 0);
+  source.stop();
+});
+
+test('the reconcile timer runs only while working and stops after an idle snapshot', async () => {
+  const timers = fakeTimers();
+  const gw = fakeGateway({ sessions: [sess('a', true)] });
+  const source = makeSource(gw, {
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+    trailingSnapshotMs: 120000,
+  });
+  const seen = [];
+  source.on('agents', (a) => seen.push(a));
+
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+
+  assert.equal(timers.count(60000), 1, 'working state should arm reconcile');
+  await timers.tick(60000);
+  assert.equal(seen.length, 2, 'reconcile should fire while working');
+  assert.equal(timers.count(60000), 1, 'reconcile should re-arm while work continues');
+
+  gw.state.sessions = [sess('a', false)];
+  gw.state.options.onEvent({ event: 'sessions.changed', payload: {} });
+  await timers.tick(0);
+
+  assert.equal(seen.at(-1)[0].state, 'idle');
+  assert.equal(timers.count(60000), 0, 'idle state should clear reconcile');
+  source.stop();
+});
+
+test('a real event before the trailing timer replaces it instead of double-snapshotting', async () => {
+  const timers = fakeTimers();
+  const gw = fakeGateway({ sessions: [sess('a', true)] });
+  const source = makeSource(gw, { setTimeoutFn: timers.setTimeoutFn, clearTimeoutFn: timers.clearTimeoutFn });
+  const seen = [];
+  source.on('agents', (a) => seen.push(a));
+
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+  assert.equal(timers.count(2000), 1);
+
+  gw.state.options.onEvent({ event: 'sessions.changed', payload: {} });
+  await timers.tick(0);
+  assert.equal(seen.length, 2, 'the real event should trigger the replacement snapshot');
+  assert.equal(timers.count(2000), 1, 'exactly one replacement trailing timer should remain');
+
+  await timers.tick(2000);
+  assert.equal(seen.length, 3, 'only the replacement trailing timer should fire');
+  await timers.tick(2000);
+  assert.equal(seen.length, 3, 'no canceled trailing timer should still fire later');
   source.stop();
 });
 

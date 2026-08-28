@@ -420,3 +420,41 @@ its responsibilities.
 deployment details the health contract does not need: broker username/password,
 broker host or URL, device tokens, paired scopes, and filesystem paths are all
 excluded on purpose. The contract is an allowlist, not a filtered dump.
+
+---
+
+## D-014 — OpenClaw presence stays event-driven, with a one-shot trailing re-check and slow working-only reconcile
+
+**Decision.** `daemon/sources/openclaw.js` stays event-driven with the existing
+150 ms debounce, but adds two timer-triggered calls to the same full
+`snapshot()` path:
+
+- after a snapshot that still shows any non-idle session, arm one trailing
+  re-snapshot at 2000 ms
+- while any session is non-idle, keep a slow reconcile snapshot running every
+  60000 ms
+
+Both timers stop when the snapshot comes back fully idle. A real subscribed
+event clears and replaces the trailing timer before scheduling its own debounced
+snapshot. There is still **no polling while idle**.
+
+**Why.** Measured on the live host on **2026-08-28**: Labby's Discord turn ended
+at **17:27:21Z**. roost's debounced snapshot ran at **17:27:22.790Z** and still
+read `hasActiveRun` on
+`agent:labby:discord:channel:1522783879667253299`. The gateway's final write for
+that session is stamped **17:27:23.042Z** with `status=done` and `hasActiveRun`
+absent. No subscribed session event arrived after that write, so roost never
+snapshotted again and showed `thinking` for eleven minutes. A later unrelated
+gateway event caused a fresh snapshot and the panel immediately returned idle.
+
+**Rejected.**
+
+- Always polling. It would mask this race, but it violates the design goal that
+  the panel sit completely quiet while idle.
+- Keeping a local projection and locally "finishing" runs. That would invent
+  state the daemon does not own and would drift from the gateway on any missed
+  event, exactly the boundary this source is written to avoid.
+
+**What changes if wrong.** Tune `ROOST`-side timing, or remove the trailing
+re-check if a future gateway release guarantees a terminal session event after
+every final write. The aggregation contract and renderer do not change.

@@ -107,12 +107,21 @@ export class OpenClawStateSource extends StateSource {
     // Bursts of events (a run starting fires several) collapse into one
     // snapshot instead of one request each.
     debounceMs = 150,
+    trailingSnapshotMs = 2000,
+    reconcileMs = 60000,
+    setTimeoutFn = setTimeout,
+    clearTimeoutFn = clearTimeout,
   } = {}) {
     super();
-    Object.assign(this, { createClient, url, deviceToken, deviceIdentity, scopes, debounceMs });
+    Object.assign(this, {
+      createClient, url, deviceToken, deviceIdentity, scopes, debounceMs,
+      trailingSnapshotMs, reconcileMs, setTimeoutFn, clearTimeoutFn,
+    });
     this.client = null;
     this.stopped = true;
     this.timer = null;
+    this.trailingTimer = null;
+    this.reconcileTimer = null;
     this.inFlight = false;
     /** sessionKey -> latest session.observer digest. Push-only: it cannot be
      *  re-read from sessions.list, so it has to be held here. Pruned to the
@@ -191,11 +200,23 @@ export class OpenClawStateSource extends StateSource {
       const agents = mapSessionsToAgents(sessions, this.digests, this.previous);
       this.previous = new Map(agents.map((a) => [a.id, { state: a.state, since: a.since }]));
       this.emit('agents', agents);
+      this.afterSnapshot(agents);
     } catch (err) {
       this.emit('warning', `openclaw sessions.list: ${err?.message ?? err}`);
     } finally {
       this.inFlight = false;
     }
+  }
+
+  afterSnapshot(agents) {
+    const working = agents.some((agent) => agent?.state && agent.state !== 'idle');
+    if (!working) {
+      this.clearTrailingTimer();
+      this.clearReconcileTimer();
+      return;
+    }
+    this.ensureReconcileTimer();
+    if (!this.snapshotReasonIs('trailing')) this.scheduleTrailingSnapshot();
   }
 
   /** A session.observer digest: the observer's read of how a run is going. */
@@ -216,16 +237,67 @@ export class OpenClawStateSource extends StateSource {
 
   schedule() {
     if (this.stopped) return;
-    clearTimeout(this.timer);
-    this.timer = setTimeout(() => { void this.snapshot(); }, this.debounceMs);
+    this.clearTrailingTimer();
+    this.clearDebounceTimer();
+    this.timer = this.armTimer('event', this.debounceMs);
     this.timer.unref?.();
+  }
+
+  snapshotReasonIs(reason) {
+    return this.currentSnapshotReason === reason;
+  }
+
+  armTimer(reason, delayMs) {
+    const timer = this.setTimeoutFn(() => {
+      if (reason === 'event' && this.timer === timer) this.timer = null;
+      if (reason === 'trailing' && this.trailingTimer === timer) this.trailingTimer = null;
+      if (reason === 'reconcile' && this.reconcileTimer === timer) this.reconcileTimer = null;
+      void this.runSnapshotFrom(reason);
+    }, delayMs);
+    timer?.unref?.();
+    return timer;
+  }
+
+  async runSnapshotFrom(reason) {
+    this.currentSnapshotReason = reason;
+    try {
+      await this.snapshot();
+    } finally {
+      this.currentSnapshotReason = null;
+    }
+  }
+
+  scheduleTrailingSnapshot() {
+    this.clearTrailingTimer();
+    this.trailingTimer = this.armTimer('trailing', this.trailingSnapshotMs);
+  }
+
+  ensureReconcileTimer() {
+    if (this.reconcileTimer) return;
+    this.reconcileTimer = this.armTimer('reconcile', this.reconcileMs);
+  }
+
+  clearDebounceTimer() {
+    this.clearTimeoutFn(this.timer);
+    this.timer = null;
+  }
+
+  clearTrailingTimer() {
+    this.clearTimeoutFn(this.trailingTimer);
+    this.trailingTimer = null;
+  }
+
+  clearReconcileTimer() {
+    this.clearTimeoutFn(this.reconcileTimer);
+    this.reconcileTimer = null;
   }
 
   stop() {
     if (this.stopped) return;   // idempotent: stop() may be called twice
     this.stopped = true;
-    clearTimeout(this.timer);
-    this.timer = null;
+    this.clearDebounceTimer();
+    this.clearTrailingTimer();
+    this.clearReconcileTimer();
     this.digests.clear();
     this.previous.clear();
     try { this.client?.stop(); } catch { /* stopping is best-effort */ }
