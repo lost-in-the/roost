@@ -113,7 +113,7 @@ async function main() {
     // heartbeat, which would turn one bad prompt into a line every 10 seconds.
     // Every change passes through here first, so nothing is missed.
     const payload = aggregate(agents, { onWarn: (msg) => log(`WARNING ${msg}`) });
-    log(`state=${payload.state} count=${payload.count} urgency=${payload.urgency} prompt=${payload.prompt?.id ?? 'none'} label=${JSON.stringify(payload.label)}`);
+    log(`state=${payload.state} count=${payload.count} urgency=${payload.urgency} prompt=${payload.prompt ? `${payload.prompt.kind}:${payload.prompt.id}` : 'none'} label=${JSON.stringify(payload.label)}`);
     publisher.touch();
   });
 

@@ -60,21 +60,31 @@ export const DEMO_SCRIPT = [
   ]},
 
   // The SAME run asks a second question — which is why answering names the
-  // prompt id and not the run id. This one carries no prompt, so it exercises
-  // two things at once: truncation (the label is deliberately longer than the
-  // 64-character contract maximum) and the degraded rendering, needs_attention
-  // with no buttons, which is where a question too long to fit on the glass
-  // belongs until the handoff rule in §2 exists.
+  // prompt id and not the run id. The label is deliberately longer than the
+  // 64-character contract maximum, so it exercises truncation AND the §2
+  // handoff rule at once: the source asks for approve_reject, and the daemon
+  // downgrades it to a handoff because the question cannot be read in full on
+  // the glass. The panel says a decision is waiting and draws no buttons.
   { after: 51000, agents: [
-    { id: 'cutty', state: 'needs_attention', label: L('Approve destructive migration on the production photopush database before continuing?'), runId: 'run-1d7e', urgency: 'blocking', since: 51000 },
+    { id: 'cutty', state: 'needs_attention', label: L('Approve destructive migration on the production photopush database before continuing?'), runId: 'run-1d7e', urgency: 'blocking', since: 51000,
+      prompt: { id: 'prm_c410', kind: 'approve_reject', reversible: false, expiresAt: 59000 } },
+  ]},
+
+  // A third question, carrying no prompt at all. This is what EVERY surface
+  // that predates the field renders — the Stream Deck included, and it must
+  // keep working untouched — and it is what the live OpenClaw source produces
+  // today, since nothing upstream emits prompts yet. Three renderings, three
+  // steps: buttons, handoff, and bare.
+  { after: 59000, agents: [
+    { id: 'cutty', state: 'needs_attention', label: L('Waiting on you'), runId: 'run-1d7e', urgency: 'blocking', since: 59000 },
   ]},
 
   // Answered. Back to listening, then quiet.
-  { after: 59000, agents: [
-    { id: 'cutty', state: 'listening', label: L('Listening'), runId: 'run-1d7e', urgency: 'ambient', since: 59000 },
+  { after: 67000, agents: [
+    { id: 'cutty', state: 'listening', label: L('Listening'), runId: 'run-1d7e', urgency: 'ambient', since: 67000 },
   ]},
-  { after: 64000, agents: [
-    { id: 'cutty', state: 'idle', label: null, runId: null, urgency: 'ambient', since: 64000 },
+  { after: 72000, agents: [
+    { id: 'cutty', state: 'idle', label: null, runId: null, urgency: 'ambient', since: 72000 },
   ]},
 ];
 

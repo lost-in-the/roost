@@ -124,27 +124,51 @@ test('a scripted relative expiry is emitted as wall-clock, not left relative', (
   }
 });
 
-test('the demo loop reaches a step where the panel would draw buttons', () => {
+/** Every payload the demo loop produces, aggregated at one fixed instant. */
+function payloadsOverOneLoop(script) {
   const now = Date.now();
-  const withButtons = emittedOverOneLoop(DEMO_SCRIPT)
-    .map((agents) => aggregate(agents, { now }))
-    .filter((out) => out.prompt !== null);
-  assert.ok(withButtons.length > 0, 'no step in the demo loop yields a prompt');
-  for (const out of withButtons) {
+  return emittedOverOneLoop(script).map((agents) => aggregate(agents, { now }));
+}
+
+test('every prompt in the demo loop belongs to the agent on the glass', () => {
+  const withPrompt = payloadsOverOneLoop(DEMO_SCRIPT).filter((out) => out.prompt !== null);
+  assert.ok(withPrompt.length > 0, 'no step in the demo loop yields a prompt');
+  for (const out of withPrompt) {
     assert.equal(out.state, 'needs_attention', 'a prompt without needs_attention is incoherent');
-    assert.equal(out.prompt.kind, 'approve_reject');
     assert.equal(out.primary_run_id, 'run-1d7e', 'the prompt belongs to the agent on the glass');
   }
 });
 
-test('the demo loop also reaches needs_attention with no prompt', () => {
-  // The degraded rendering is a real state the panel must handle, so the demo
-  // has to show it rather than only ever showing the happy path.
-  const now = Date.now();
-  const degraded = emittedOverOneLoop(DEMO_SCRIPT)
-    .map((agents) => aggregate(agents, { now }))
-    .filter((out) => out.state === 'needs_attention' && out.prompt === null);
-  assert.ok(degraded.length > 0, 'demo never shows needs_attention without buttons');
+test('the demo loop reaches all three prompt renderings', () => {
+  // Buttons, handoff, and bare needs_attention look different on the glass, so
+  // the demo has to show all three rather than only the happy path.
+  const payloads = payloadsOverOneLoop(DEMO_SCRIPT);
+  const buttons = payloads.filter((o) => o.prompt?.kind === 'approve_reject');
+  const handoff = payloads.filter((o) => o.prompt?.kind === 'handoff');
+  const bare = payloads.filter((o) => o.state === 'needs_attention' && o.prompt === null);
+
+  assert.ok(buttons.length > 0, 'demo never shows approvable buttons');
+  assert.ok(handoff.length > 0, 'demo never shows the handoff rendering');
+  assert.ok(bare.length > 0, 'demo never shows needs_attention with no prompt at all');
+});
+
+test('every approvable prompt in the demo loop has a label that actually fits', () => {
+  // The §2 rule the other way round: if this ever fails, the daemon is offering
+  // one tap on a question nobody could read in full.
+  for (const out of payloadsOverOneLoop(DEMO_SCRIPT)) {
+    if (out.prompt?.kind !== 'approve_reject') continue;
+    assert.ok(out.label, 'an approvable prompt must have a label');
+    assert.ok(!out.label.endsWith('…'), `approvable label was truncated: ${out.label}`);
+  }
+});
+
+test('the demo loop downgrades the over-long question rather than dropping it', () => {
+  const handoff = payloadsOverOneLoop(DEMO_SCRIPT).filter((o) => o.prompt?.kind === 'handoff');
+  assert.ok(handoff.length > 0);
+  for (const out of handoff) {
+    assert.ok(out.label.endsWith('…'), 'the handoff step is the truncated one');
+    assert.ok(out.prompt.id, 'a handoff still identifies its question');
+  }
 });
 
 test('no scripted prompt is ever dropped as malformed', () => {
@@ -168,13 +192,21 @@ test('an agent with no scripted prompt does not gain one on emission', () => {
 
 test('a prompt survives the simultaneous-transition step it spans', () => {
   // The race step changes two other agents. The asking agent is untouched, so
-  // its question must not blink out and back.
-  const asking = DEMO_SCRIPT
-    .map((step) => step.agents.find((a) => a.prompt))
-    .filter(Boolean);
-  assert.ok(asking.length >= 2, 'the prompt must span more than one step');
-  const ids = new Set(asking.map((a) => a.prompt.id));
-  assert.equal(ids.size, 1, 'the same question keeps the same id across steps');
+  // its question must not blink out and back, or reappear with a new id.
+  let spanned = false;
+  for (let i = 1; i < DEMO_SCRIPT.length; i++) {
+    const before = DEMO_SCRIPT[i - 1].agents.find((a) => a.prompt);
+    const after = DEMO_SCRIPT[i].agents.find((a) => a.id === before?.id && a.prompt);
+    if (!before || !after) continue;
+    const othersChanged = DEMO_SCRIPT[i].agents.filter((a) => {
+      const prior = DEMO_SCRIPT[i - 1].agents.find((b) => b.id === a.id);
+      return a.id !== before.id && prior && prior.state !== a.state;
+    }).length;
+    if (othersChanged < 2) continue;
+    spanned = true;
+    assert.equal(after.prompt.id, before.prompt.id, 'the same question keeps the same id');
+  }
+  assert.ok(spanned, 'a prompt must span the simultaneous-transition step');
 });
 
 test('the demo script has one run asking two different questions', () => {

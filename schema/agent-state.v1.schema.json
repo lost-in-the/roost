@@ -31,7 +31,7 @@
     "label": {
       "type": ["string", "null"],
       "maxLength": 64,
-      "description": "Short human-readable line, from the agent that determined the displayed state. Truncated to 64 characters IN THE DAEMON, at this schema boundary; a truncated value ends with U+2026. A renderer may ellipsize further to fit its glass but must never receive a longer string."
+      "description": "Short human-readable line, from the agent that determined the displayed state. Truncated to 64 characters IN THE DAEMON, at this schema boundary; a truncated value ends with U+2026. A renderer may ellipsize further to fit its glass but must never receive a longer string. The cap is a feature, not a budget: a label that had to be truncated, or that is missing entirely, forces any accompanying prompt to kind 'handoff', because approving a question you could not read in full is the failure the cap exists to prevent."
     },
     "urgency": {
       "enum": ["ambient", "notify", "blocking"],
@@ -58,8 +58,8 @@
           "description": "Identifies the QUESTION, not the run. Distinct from 'primary_run_id' because one run can ask several questions in sequence, so answering has to name the question. An answer for an id the daemon has already resolved must be rejected by the daemon, never by the browser."
         },
         "kind": {
-          "enum": ["approve_reject"],
-          "description": "What controls to draw. M2 ships 'approve_reject' only; the field exists so later kinds need no contract change. A renderer MUST treat an unknown kind as no prompt rather than guessing at controls."
+          "enum": ["approve_reject", "handoff"],
+          "description": "What controls to draw. 'approve_reject' draws two buttons. 'handoff' draws NONE: the question exists but cannot be answered here, so the surface says a decision is waiting and sends you to read it properly elsewhere. That is designed behaviour, not a failure state. A renderer MUST treat an unknown kind as no prompt rather than guessing at controls, which is what makes adding a kind safe: a renderer that does not know 'handoff' shows needs_attention with no buttons, which is already almost the right rendering."
         },
         "reversible": {
           "type": "boolean",
@@ -100,6 +100,22 @@
         "kind": "approve_reject",
         "reversible": true,
         "expires_at": "2026-08-21T18:09:02Z"
+      }
+    },
+    {
+      "v": 1,
+      "ts": "2026-08-21T18:12:40Z",
+      "state": "needs_attention",
+      "count": 1,
+      "label": "Approve destructive migration on the production photopush datab…",
+      "urgency": "blocking",
+      "primary_run_id": "run-1d7e",
+      "since": "2026-08-21T18:12:31Z",
+      "prompt": {
+        "id": "prm_c410",
+        "kind": "handoff",
+        "reversible": false,
+        "expires_at": "2026-08-21T18:17:31Z"
       }
     },
     {
