@@ -584,8 +584,14 @@ test('resolution sends exactly one approval.resolve and an ambiguous failure fre
   gw.state.options.onHelloOk({ auth: {} });
   await settle();
   source.setConnectionState('connected');
-  await assert.rejects(() => source.resolveApproval({ id: 'appr-1', decision: 'deny' }), /socket closed/);
-  await assert.rejects(() => source.resolveApproval({ id: 'appr-1', decision: 'deny' }), /not actionable/);
+  await assert.rejects(
+    () => source.resolveApproval({ id: 'appr-1', decision: 'deny' }),
+    (err) => err?.code === 'transport_uncertain' && /socket closed/.test(err.message),
+  );
+  await assert.rejects(
+    () => source.resolveApproval({ id: 'appr-1', decision: 'deny' }),
+    (err) => err?.code === 'not_actionable' && /not actionable/.test(err.message),
+  );
   assert.equal(gw.state.requests.filter((m) => m === 'approval.resolve').length, 1);
   assert.deepEqual(gw.state.requestParams.find((r) => r.method === 'approval.resolve')?.params, {
     id: 'appr-1',
@@ -595,7 +601,7 @@ test('resolution sends exactly one approval.resolve and an ambiguous failure fre
   source.stop();
 });
 
-test('another surface winning surfaces the canonical terminal decision rather than the local attempt', async () => {
+test('another surface winning surfaces already_answered and records the canonical terminal decision', async () => {
   const gw = fakeGateway({
     sessions: [sess('a', true)],
     onRequest(method) {
@@ -637,10 +643,283 @@ test('another surface winning surfaces the canonical terminal decision rather th
   gw.state.options.onHelloOk({ auth: {} });
   await settle();
   source.setConnectionState('connected');
-  const result = await source.resolveApproval({ id: 'appr-1', decision: 'allow-once' });
-  assert.equal(result.applied, false);
-  await assert.rejects(() => source.resolveApproval({ id: 'appr-1', decision: 'deny' }), /already answered/);
+  await assert.rejects(
+    () => source.resolveApproval({ id: 'appr-1', decision: 'allow-once' }),
+    (err) => err?.code === 'already_answered' && err?.status === 'denied' && err?.decision === 'deny',
+  );
+  await assert.rejects(
+    () => source.resolveApproval({ id: 'appr-1', decision: 'deny' }),
+    (err) => err?.code === 'already_answered',
+  );
   assert.equal(source.approvals.getResolved('appr-1').decision, 'deny');
+  source.stop();
+});
+
+test('malformed gateway success freezes the prompt and fails closed without a retry', async () => {
+  for (const response of [
+    { applied: true },
+    { applied: true, approval: { id: 'appr-1', status: 'pending', presentation: { kind: 'plugin' } } },
+    { applied: true, approval: { id: 'appr-1', status: 'mystery', presentation: { kind: 'plugin' } } },
+  ]) {
+    const gw = fakeGateway({
+      sessions: [sess('a', true)],
+      onRequest(method) {
+        if (method === 'sessions.messages.subscribe') {
+          return Promise.resolve({
+            approvalReplay: {
+              approvals: [{
+                id: 'appr-1',
+                status: 'pending',
+                expiresAtMs: Date.now() + 5000,
+                presentation: {
+                  kind: 'plugin',
+                  allowedDecisions: ['allow-once', 'deny'],
+                  title: 'Approve short change?',
+                  metadata: { reversible: true },
+                },
+              }],
+              truncated: false,
+            },
+          });
+        }
+        if (method === 'approval.resolve') return Promise.resolve(response);
+        return undefined;
+      },
+    });
+    const source = makeSource(gw);
+    source.start();
+    gw.state.options.onHelloOk({ auth: {} });
+    await settle();
+    source.setConnectionState('connected');
+    await assert.rejects(
+      () => source.resolveApproval({ id: 'appr-1', decision: 'deny' }),
+      (err) => err?.code === 'transport_uncertain' && /status is uncertain/.test(err.message),
+    );
+    await assert.rejects(
+      () => source.resolveApproval({ id: 'appr-1', decision: 'deny' }),
+      (err) => err?.code === 'not_actionable' && /not actionable/.test(err.message),
+    );
+    assert.equal(gw.state.requests.filter((m) => m === 'approval.resolve').length, 1);
+    assert.equal(source.approvals.findPending('appr-1')?.approval?.actionable, false);
+    source.stop();
+  }
+});
+
+test('applied false without a terminal canonical result freezes the prompt and fails closed without a retry', async () => {
+  for (const response of [
+    { applied: false },
+    { applied: false, approval: { id: 'appr-1', status: 'pending', presentation: { kind: 'plugin' } } },
+    { applied: false, approval: { id: 'appr-1', status: 'mystery', presentation: { kind: 'plugin' } } },
+  ]) {
+    const gw = fakeGateway({
+      sessions: [sess('a', true)],
+      onRequest(method) {
+        if (method === 'sessions.messages.subscribe') {
+          return Promise.resolve({
+            approvalReplay: {
+              approvals: [{
+                id: 'appr-1',
+                status: 'pending',
+                expiresAtMs: Date.now() + 5000,
+                presentation: {
+                  kind: 'plugin',
+                  allowedDecisions: ['allow-once', 'deny'],
+                  title: 'Approve short change?',
+                  metadata: { reversible: true },
+                },
+              }],
+              truncated: false,
+            },
+          });
+        }
+        if (method === 'approval.resolve') return Promise.resolve(response);
+        return undefined;
+      },
+    });
+    const source = makeSource(gw);
+    source.start();
+    gw.state.options.onHelloOk({ auth: {} });
+    await settle();
+    source.setConnectionState('connected');
+    await assert.rejects(
+      () => source.resolveApproval({ id: 'appr-1', decision: 'deny' }),
+      (err) => err?.code === 'transport_uncertain' && /status is uncertain/.test(err.message),
+    );
+    await assert.rejects(
+      () => source.resolveApproval({ id: 'appr-1', decision: 'deny' }),
+      (err) => err?.code === 'not_actionable' && /not actionable/.test(err.message),
+    );
+    assert.equal(gw.state.requests.filter((m) => m === 'approval.resolve').length, 1);
+    assert.equal(source.approvals.findPending('appr-1')?.approval?.actionable, false);
+    source.stop();
+  }
+});
+
+test('concurrent duplicate resolutions share one gateway request and one result', async () => {
+  let resolveGateway;
+  const gw = fakeGateway({
+    sessions: [sess('a', true)],
+    onRequest(method) {
+      if (method === 'sessions.messages.subscribe') {
+        return Promise.resolve({
+          approvalReplay: {
+            approvals: [{
+              id: 'appr-1',
+              status: 'pending',
+              expiresAtMs: Date.now() + 5000,
+              presentation: {
+                kind: 'plugin',
+                allowedDecisions: ['allow-once', 'deny'],
+                title: 'Approve short change?',
+                metadata: { reversible: true },
+              },
+            }],
+            truncated: false,
+          },
+        });
+      }
+      if (method === 'approval.resolve') {
+        return new Promise((resolve) => {
+          resolveGateway = () => resolve({
+            applied: true,
+            approval: {
+              id: 'appr-1',
+              status: 'denied',
+              decision: 'deny',
+              resolvedAtMs: 4000,
+              presentation: { kind: 'plugin', allowedDecisions: ['allow-once', 'deny'] },
+            },
+          });
+        });
+      }
+      return undefined;
+    },
+  });
+  const source = makeSource(gw);
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+  source.setConnectionState('connected');
+
+  const first = source.resolveApproval({ id: 'appr-1', decision: 'deny' });
+  const second = source.resolveApproval({ id: 'appr-1', decision: 'deny' });
+  assert.equal(gw.state.requests.filter((m) => m === 'approval.resolve').length, 1);
+
+  resolveGateway();
+  const [a, b] = await Promise.all([first, second]);
+  assert.deepEqual(a, b);
+  source.stop();
+});
+
+test('concurrent opposite decisions do not share a flight and the loser does not report success', async () => {
+  let resolveGateway;
+  const gw = fakeGateway({
+    sessions: [sess('a', true)],
+    onRequest(method) {
+      if (method === 'sessions.messages.subscribe') {
+        return Promise.resolve({
+          approvalReplay: {
+            approvals: [{
+              id: 'appr-1',
+              status: 'pending',
+              expiresAtMs: Date.now() + 5000,
+              presentation: {
+                kind: 'plugin',
+                allowedDecisions: ['allow-once', 'deny'],
+                title: 'Approve short change?',
+                metadata: { reversible: true },
+              },
+            }],
+            truncated: false,
+          },
+        });
+      }
+      if (method === 'approval.resolve') {
+        return new Promise((resolve) => {
+          resolveGateway = () => resolve({
+            applied: true,
+            approval: {
+              id: 'appr-1',
+              status: 'allowed',
+              decision: 'allow-once',
+              resolvedAtMs: 4000,
+              presentation: { kind: 'plugin', allowedDecisions: ['allow-once', 'deny'] },
+            },
+          });
+        });
+      }
+      return undefined;
+    },
+  });
+  const source = makeSource(gw);
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+  source.setConnectionState('connected');
+
+  const first = source.resolveApproval({ id: 'appr-1', decision: 'allow-once' });
+  await assert.rejects(
+    () => source.resolveApproval({ id: 'appr-1', decision: 'deny' }),
+    (err) => err?.code === 'already_answered',
+  );
+  assert.equal(gw.state.requests.filter((m) => m === 'approval.resolve').length, 1);
+
+  resolveGateway();
+  const result = await first;
+  assert.equal(result.approval.decision, 'allow-once');
+  source.stop();
+});
+
+test('a successful resolution is removed from the next emitted payload', async () => {
+  const gw = fakeGateway({
+    sessions: [sess('a', true)],
+    onRequest(method) {
+      if (method === 'sessions.messages.subscribe') {
+        return Promise.resolve({
+          approvalReplay: {
+            approvals: [{
+              id: 'appr-1',
+              status: 'pending',
+              expiresAtMs: Date.now() + 5000,
+              presentation: {
+                kind: 'plugin',
+                allowedDecisions: ['allow-once', 'deny'],
+                title: 'Approve short change?',
+                metadata: { reversible: true },
+              },
+            }],
+            truncated: false,
+          },
+        });
+      }
+      if (method === 'approval.resolve') {
+        return Promise.resolve({
+          applied: true,
+          approval: {
+            id: 'appr-1',
+            status: 'denied',
+            decision: 'deny',
+            resolvedAtMs: 4000,
+            presentation: { kind: 'plugin', allowedDecisions: ['allow-once', 'deny'] },
+          },
+        });
+      }
+      return undefined;
+    },
+  });
+  const source = makeSource(gw);
+  const seen = [];
+  source.on('agents', (agents) => seen.push(agents));
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+  source.setConnectionState('connected');
+
+  await source.resolveApproval({ id: 'appr-1', decision: 'deny' });
+  await settle();
+
+  assert.equal(seen.at(-1)[0].prompt, undefined);
+  assert.equal(seen.at(-1)[0].state, 'thinking');
   source.stop();
 });
 

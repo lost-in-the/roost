@@ -36,6 +36,10 @@ function actionableWithPair(allowedDecisions) {
   return allowedDecisions.includes('allow-once') && allowedDecisions.includes('deny');
 }
 
+export function isTerminalApprovalStatus(status) {
+  return typeof status === 'string' && SAFE_STATUSES.has(status) && status !== 'pending';
+}
+
 export function projectApproval(approval, {
   fromTruncatedReplay = false,
   onDrop = () => {},
@@ -168,6 +172,15 @@ export class PendingApprovalStore {
 
   getResolved(id) {
     return this.resolved.get(id) ?? null;
+  }
+
+  findPending(id) {
+    this.expire();
+    for (const [sessionKey, entries] of this.pendingBySession) {
+      const approval = entries.get(id);
+      if (approval) return { sessionKey, entries, approval };
+    }
+    return null;
   }
 
   getPrompt(sessionKey, { actionable = true } = {}) {

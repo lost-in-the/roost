@@ -133,7 +133,20 @@ test('refuses approval resolution for a stale alias', async () => {
   const source = new MultiGatewaySource([{ alias: 'labby', source: labby }]);
   source.start();
   labby.emit('connection', { state: 'reconciling' });
-  await assert.rejects(() => source.resolveApproval('labby:prompt-1', 'deny'), /stale or reconciling/);
+  await assert.rejects(
+    () => source.resolveApproval('labby:prompt-1', 'deny'),
+    (err) => err?.code === 'gateway_stale' && /stale or reconciling/.test(err.message),
+  );
+});
+
+test('treats an unknown gateway alias as unknown_prompt', async () => {
+  const labby = new FakeSource();
+  const source = new MultiGatewaySource([{ alias: 'labby', source: labby }]);
+  source.start();
+  await assert.rejects(
+    () => source.resolveApproval('nope:prompt-1', 'deny'),
+    (err) => err?.code === 'unknown_prompt' && /unknown gateway alias/.test(err.message),
+  );
 });
 
 test('qualifies an undefined runId to null', () => {

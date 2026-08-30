@@ -3,15 +3,21 @@ import { SESSION_VIEWER_PRESENCE_MAX_KEYS } from '@openclaw/gateway-protocol/sch
 import { StateSource } from './state-source.js';
 import { deviceSigningDeps } from '../openclaw/ed25519.js';
 import { mapSessionsToAgents } from '../openclaw/map-sessions.js';
-import { PendingApprovalStore, projectApproval, SAFE_DECISIONS } from '../openclaw/approvals.js';
+import {
+  PendingApprovalStore,
+  projectApproval,
+  SAFE_DECISIONS,
+  isTerminalApprovalStatus,
+} from '../openclaw/approvals.js';
+import { safeApprovalSummary } from '../openclaw/approval-spike.js';
 
 /**
  * OpenClawStateSource — agent presence, read from the OpenClaw gateway.
  *
  * Connects as the Labby paired operator device. Its live credential now holds
- * `operator.read` plus `operator.approvals`, but this M1 source implements only
- * read-only presence calls and no approval route. The device token lives beside
- * its keypair in ~/.local/state/roost/openclaw-device.json.
+ * `operator.read` plus `operator.approvals`; presence remains the primary read
+ * path, and approval resolution is the one write path. The device token lives
+ * beside its keypair in ~/.local/state/roost/openclaw-device.json.
  *
  * PUSH, NOT POLL. The gateway broadcasts session changes, and its own client
  * guide (docs/gateway/clients.md) says to subscribe rather than poll. Nothing
@@ -60,6 +66,13 @@ const READ_ONLY_SCOPES = ['operator.read'];
  */
 const CAPS = [GATEWAY_CLIENT_CAPS.TOOL_EVENTS];
 const CONNECTION_STATES = new Set(['connected', 'reconciling', 'disconnected']);
+
+export function codedError(code, message, extra = {}) {
+  const err = new Error(message);
+  err.code = code;
+  Object.assign(err, extra);
+  return err;
+}
 
 function approvalPrompt(prompt) {
   // Gateway approval presentation kinds (for example `plugin`) are distinct
@@ -153,6 +166,7 @@ export class OpenClawStateSource extends StateSource {
      *  gateway field expresses; see daemon/openclaw/map-sessions.js. */
     this.previous = new Map();
     this.approvals = new PendingApprovalStore();
+    this.resolveFlights = new Map();
     this.connectionState = 'disconnected';
     this.subscribedApprovalKeys = new Set();
   }
@@ -353,31 +367,71 @@ export class OpenClawStateSource extends StateSource {
   }
 
   async resolveApproval({ id, decision }) {
-    if (!SAFE_DECISIONS.has(decision)) throw new Error('approval decision must be allow-once or deny');
-    this.approvals.expire();
-    for (const [sessionKey, entries] of this.approvals.pendingBySession) {
-      const approval = entries.get(id);
-      if (!approval) continue;
-      if (this.connectionState !== 'connected') throw new Error('approval source is not answerable while stale or reconciling');
-      if (!approval.actionable) throw new Error('approval is not actionable');
-      if (approval.expiresAtMs !== null && approval.expiresAtMs <= this.approvals.now()) {
-        entries.delete(id);
-        throw new Error('approval already expired');
-      }
-      try {
-        const result = await this.client.request('approval.resolve', { id, kind: approval.gatewayKind, decision });
-        const canonical = result?.approval;
-        if (canonical?.status && canonical.status !== 'pending') this.approvals.resolve(sessionKey, canonical);
+    if (!SAFE_DECISIONS.has(decision)) throw codedError('bad_request', 'approval decision must be allow-once or deny');
+    const inFlight = this.resolveFlights.get(id);
+    if (inFlight) {
+      if (inFlight.decision === decision) return inFlight.promise;
+      throw codedError('already_answered', 'approval already answered', {
+        correlation: safeApprovalSummary({ id }).correlation,
+      });
+    }
+    const flight = this.resolveApprovalOnce({ id, decision });
+    this.resolveFlights.set(id, { decision, promise: flight });
+    try {
+      return await flight;
+    } finally {
+      if (this.resolveFlights.get(id)?.promise === flight) this.resolveFlights.delete(id);
+    }
+  }
+
+  async resolveApprovalOnce({ id, decision }) {
+    const found = this.approvals.findPending(id);
+    if (!found) {
+      if (this.approvals.getResolved(id)) throw codedError('already_answered', 'approval already answered');
+      throw codedError('unknown_prompt', `unknown approval ${JSON.stringify(id)}`);
+    }
+    const { sessionKey, entries, approval } = found;
+    if (this.connectionState !== 'connected') {
+      throw codedError('gateway_stale', 'approval source is not answerable while stale or reconciling');
+    }
+    if (!approval.actionable) throw codedError('not_actionable', 'approval is not actionable');
+    if (approval.expiresAtMs !== null && approval.expiresAtMs <= this.approvals.now()) {
+      entries.delete(id);
+      throw codedError('expired', 'approval already expired');
+    }
+    try {
+      const result = await this.client.request('approval.resolve', { id, kind: approval.gatewayKind, decision });
+      const canonical = result?.approval;
+      const hasTerminalCanonical = isTerminalApprovalStatus(canonical?.status);
+      if (result?.applied === false) {
+        if (!hasTerminalCanonical) {
+          entries.set(id, { ...approval, actionable: false });
+          this.schedule();
+          throw codedError('transport_uncertain', 'approval resolution status is uncertain');
+        }
+        this.approvals.resolve(sessionKey, canonical);
         this.schedule();
-        return result;
-      } catch (err) {
+        throw codedError('already_answered', 'approval already answered', {
+          status: canonical?.status ?? null,
+          decision: canonical?.decision ?? null,
+          correlation: canonical ? safeApprovalSummary(canonical).correlation : null,
+        });
+      }
+      if (!hasTerminalCanonical) {
         entries.set(id, { ...approval, actionable: false });
         this.schedule();
-        throw err;
+        throw codedError('transport_uncertain', 'approval resolution status is uncertain');
       }
+      this.approvals.resolve(sessionKey, canonical);
+      this.schedule();
+      return result;
+    } catch (err) {
+      if (err?.code === 'already_answered') throw err;
+      if (err?.code === 'transport_uncertain') throw err;
+      entries.set(id, { ...approval, actionable: false });
+      this.schedule();
+      throw codedError('transport_uncertain', err?.message ?? 'approval resolution transport failed');
     }
-    if (this.approvals.getResolved(id)) throw new Error('approval already answered');
-    throw new Error(`unknown approval ${JSON.stringify(id)}`);
   }
 
   schedule() {
@@ -446,6 +500,7 @@ export class OpenClawStateSource extends StateSource {
     this.pendingSnapshot = false;
     this.digests.clear();
     this.previous.clear();
+    this.resolveFlights.clear();
     try { this.client?.stop(); } catch { /* stopping is best-effort */ }
   }
 }
