@@ -7,6 +7,7 @@ function qualifyAgent(alias, agent) {
     gateway: alias,
     id: `${alias}:${agent.id}`,
     runId: agent.runId == null ? null : `${alias}:${agent.runId}`,
+    ...(agent.prompt ? { prompt: { ...agent.prompt, id: `${alias}:${agent.prompt.id}` } } : {}),
   };
 }
 
@@ -64,6 +65,18 @@ export class MultiGatewaySource extends StateSource {
     return this.children
       .map(({ alias }) => alias)
       .filter((alias) => this.stale.has(alias));
+  }
+
+  async resolveApproval(qualifiedPromptId, decision) {
+    if (typeof qualifiedPromptId !== 'string' || !qualifiedPromptId.includes(':')) {
+      throw new Error('qualified prompt id must include a gateway alias');
+    }
+    const [alias, ...rest] = qualifiedPromptId.split(':');
+    const id = rest.join(':');
+    const child = this.children.find((entry) => entry.alias === alias);
+    if (!child) throw new Error(`unknown gateway alias ${JSON.stringify(alias)}`);
+    if (this.stale.has(alias)) throw new Error(`gateway ${alias} is stale or reconciling`);
+    return child.source.resolveApproval({ id, decision });
   }
 
   stop() {

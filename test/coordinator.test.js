@@ -8,6 +8,7 @@ class FakeSource extends StateSource {
     super();
     this.started = 0;
     this.stopped = 0;
+    this.resolved = [];
   }
 
   start() {
@@ -16,6 +17,11 @@ class FakeSource extends StateSource {
 
   stop() {
     this.stopped += 1;
+  }
+
+  async resolveApproval(request) {
+    this.resolved.push(request);
+    return { ok: true, request };
   }
 }
 
@@ -102,11 +108,32 @@ test('preserves prompt and future fields while qualifying id and runId', () => {
       runId: 'labby:run-1',
       urgency: 'ambient',
       since: 1,
-      prompt,
+      prompt: { ...prompt, id: 'labby:prompt-1' },
       futureField: { ok: true },
     },
   ]);
-  assert.equal(seen.at(-1)[0].prompt, prompt);
+  assert.deepEqual(seen.at(-1)[0].prompt, { ...prompt, id: 'labby:prompt-1' });
+});
+
+test('routes approval resolution only to the owning alias', async () => {
+  const labby = new FakeSource();
+  const omar = new FakeSource();
+  const source = new MultiGatewaySource([
+    { alias: 'labby', source: labby },
+    { alias: 'omar', source: omar },
+  ]);
+  source.start();
+  await source.resolveApproval('omar:prompt-9', 'deny');
+  assert.deepEqual(labby.resolved, []);
+  assert.deepEqual(omar.resolved, [{ id: 'prompt-9', decision: 'deny' }]);
+});
+
+test('refuses approval resolution for a stale alias', async () => {
+  const labby = new FakeSource();
+  const source = new MultiGatewaySource([{ alias: 'labby', source: labby }]);
+  source.start();
+  labby.emit('connection', { state: 'reconciling' });
+  await assert.rejects(() => source.resolveApproval('labby:prompt-1', 'deny'), /stale or reconciling/);
 });
 
 test('qualifies an undefined runId to null', () => {
