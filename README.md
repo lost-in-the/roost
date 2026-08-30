@@ -34,7 +34,7 @@ all out of scope.
 | State contract, daemon, renderer | working, 267 tests |
 | Hyprland output pinning | working, verified on the physical panel |
 | Physical panel | connected and live, 1024×600 on `HDMI-A-1` |
-| OpenClaw integration | Labby presence working; separate Labby/Omar identities paired with `operator.read` + `operator.approvals`; dual-Gateway daemon not built |
+| OpenClaw integration | Labby presence working; separate Labby/Omar identities paired with `operator.read` + `operator.approvals`; dual-Gateway step-1 coordinator built, deploy default still `labby` only |
 | `stalled` detection | **not mapped yet** — see [`docs/DECISIONS.md`](docs/DECISIONS.md) D-001 |
 | Touch | working — bound to the panel output, see [`config/hypr/roost.lua`](config/hypr/roost.lua) |
 
@@ -215,9 +215,32 @@ Roost identities now each hold exactly `operator.read` plus
 
 `operator.read` is sufficient for M1 presence. `operator.approvals`
 additionally authorizes resolving pending approvals, although the production
-daemon still connects only to Labby and has no approval route yet. Pairing Omar
-does not make the daemon dual-Gateway; M2 must wire that second connection
-explicitly.
+daemon still has no approval route yet. Pairing Omar alone does not make roost
+dual-Gateway; M2 step 1 adds the coordinator and per-Gateway wiring, while the
+default deployment remains `labby` only until the later owner-approved config
+flip.
+
+When `ROOST_SOURCE=openclaw`, `ROOST_OPENCLAW_GATEWAYS` selects which known
+Gateway aliases roost connects to. The code supports `labby,omar` today, but
+the default is deliberately conservative:
+
+```sh
+ROOST_OPENCLAW_GATEWAYS=labby
+```
+
+Per-Gateway overrides exist for both the URL and device file:
+
+```sh
+ROOST_OPENCLAW_URL_LABBY=ws://127.0.0.1:19789
+ROOST_OPENCLAW_URL_OMAR=ws://127.0.0.1:19791
+ROOST_OPENCLAW_DEVICE_FILE_LABBY=/home/you/.local/state/roost/openclaw-device.json
+ROOST_OPENCLAW_DEVICE_FILE_OMAR=/home/you/.local/state/roost/openclaw-omar-device.json
+```
+
+The legacy unqualified `ROOST_OPENCLAW_URL` and
+`ROOST_OPENCLAW_DEVICE_FILE` still work, but only for Labby. Reusing one
+unqualified override for both Gateways would be the exact device-identity reuse
+the M2 design forbids.
 
 Revoke each identity only through its source Gateway:
 

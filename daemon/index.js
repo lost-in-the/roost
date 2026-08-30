@@ -7,9 +7,9 @@ import { startHttpServer } from './http.js';
 import { LaptopLog } from './laptop-log.js';
 import { instrumentPayload } from './instrument.js';
 import { MockStateSource, SCRIPTS } from './sources/mock.js';
-import { createOpenClawSource, resolveDeviceFile } from './openclaw/connect.js';
-import { readDeviceToken } from './openclaw/device-identity.js';
-import { assertApprovalsNotExposed } from './approval-exposure.js';
+import { createOpenClawSource, resolveDeviceFile, resolveGatewayUrl } from './openclaw/connect.js';
+import { assertGatewayApprovalsNotExposed } from './approval-exposure.js';
+import { MultiGatewaySource } from './sources/coordinator.js';
 
 const pkg = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
@@ -28,9 +28,15 @@ const log = (msg) => console.log(`[roost] ${new Date().toISOString()} ${msg}`);
 
 function buildSource(config) {
   if (config.source === 'openclaw') {
-    const source = createOpenClawSource();
+    const children = config.openclawGateways.map((alias) => {
+      const deviceFile = resolveDeviceFile(alias);
+      const url = resolveGatewayUrl(alias);
+      log(`openclaw gateway=${alias} device=${deviceFile} url=${url}`);
+      return { alias, source: createOpenClawSource({ alias, deviceFile, url }) };
+    });
+    const source = new MultiGatewaySource(children);
     source.on('warning', (m) => log(`WARNING ${m}`));
-    log(`using OpenClawStateSource, device ${resolveDeviceFile()}`);
+    log(`using OpenClawStateSource gateways=${config.openclawGateways.join(',')}`);
     return source;
   }
   const script = SCRIPTS[config.mockScript];
@@ -53,8 +59,10 @@ async function main() {
   // and is let through here; buildSource() is what reports that, with the
   // pairing instructions.
   if (config.source === 'openclaw') {
-    const stored = readDeviceToken(resolveDeviceFile());
-    assertApprovalsNotExposed({ host: config.http.host, scopes: stored?.scopes ?? [] });
+    assertGatewayApprovalsNotExposed({
+      host: config.http.host,
+      deviceFiles: config.openclawGateways.map((alias) => resolveDeviceFile(alias)),
+    });
   }
 
   // The current full agent set. Aggregation is a pure function of this.
@@ -85,6 +93,7 @@ async function main() {
   // Republish the retained counter on every (re)connect, so a broker that was
   // restarted (and lost its retained set) gets the current value back.
   publisher.onConnected = publishInstrument;
+  const source = buildSource(config);
 
   const http = await startHttpServer({
     host: config.http.host,
@@ -98,13 +107,17 @@ async function main() {
         connected: publisher.connected,
         topic: config.mqtt.topic,
       },
+      gateways: config.source === 'openclaw'
+        ? config.openclawGateways.map((alias) => ({
+          alias,
+          stale: source.staleAliases().includes(alias),
+        }))
+        : [],
     }),
     onLog: log,
     onRecorded: publishInstrument,
   });
   log(`renderer served at http://${config.http.host}:${http.port}/`);
-
-  const source = buildSource(config);
   source.on('agents', (next) => {
     agents = next;
     // onWarn only here, not in buildPayload. aggregate() fails closed on a

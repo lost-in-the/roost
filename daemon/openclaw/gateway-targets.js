@@ -21,6 +21,8 @@ const TARGETS = Object.freeze({
   }),
 });
 
+export const GATEWAY_ALIASES = Object.freeze(Object.keys(TARGETS));
+
 export function gatewayAliasFromArgv(argv) {
   const values = [];
   for (let index = 0; index < (argv ?? []).length; index += 1) {
@@ -39,6 +41,23 @@ export function gatewayAliasFromArgv(argv) {
     throw new Error(`unknown gateway alias: ${values[0]}`);
   }
   return values[0];
+}
+
+export function parseGatewayAliases(value, fallback = ['labby']) {
+  if (value === undefined || value === '') return [...fallback];
+  const aliases = String(value)
+    .split(',')
+    .map((alias) => alias.trim())
+    .filter(Boolean);
+  if (aliases.length === 0) return [...fallback];
+
+  const seen = new Set();
+  for (const alias of aliases) {
+    if (!Object.hasOwn(TARGETS, alias)) throw new Error(`unknown gateway alias: ${alias}`);
+    if (seen.has(alias)) throw new Error(`duplicate gateway alias: ${alias}`);
+    seen.add(alias);
+  }
+  return aliases;
 }
 
 export function resolveGatewayTarget(alias, stateHome) {

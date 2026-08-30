@@ -542,3 +542,38 @@ working production approval route is not a prerequisite for M2.
 session audience, stop and document the missing runtime projection. Do not
 silently fall back to raw events; that would require a new decision with a
 separate redaction and authorization review.
+
+---
+
+## D-016 — M2 narrows to Claude-native approvals; Codex remains unsupported
+
+**Decision.** M2's supported approval input is the Claude-native plugin class
+that passed the 2026-08-27 spike on both Labby and Omar. The Codex ACP/harness
+class and native `/codex bind` are both unsupported, for different reasons: the
+first failed closed at the native PreToolUse relay before any
+`session.approval` existed, and the second creates no Gateway approval record
+at all. Roost cannot resolve an approval the harness never emits.
+
+**Why.** Roost's approval surface begins at the stable, reviewed Gateway
+projection boundary. The Claude-native class reached that boundary on both
+Gateways with pending replay, terminal events, expiry, reconnect behavior, and
+canonical first-answer behavior intact. The Codex classes did not. Repairing
+the Omar Codex native hook relay is therefore out of scope for roost itself:
+`omar-codex` is an approval-free repository worker deliberately outside this
+panel's approval surface, and reviving that relay would be a runtime repair in
+another system, not a roost feature. Narrowing does not weaken any redaction or
+authorization rule; the raw `exec.approval.*` / `plugin.approval.*` families
+stay out of scope.
+
+**Rejected.** Claiming roost will repair the Omar Codex relay would promise a
+runtime fix outside this repository and outside roost's ownership boundary.
+Treating the failed harness path as "close enough" and falling back to raw
+events would cross the exact payload and authorization boundary D-015 rejected.
+Broadening support to native `/codex bind` was already rejected at the
+observable boundary: it creates no Gateway approval record for roost to observe
+or resolve.
+
+**What changes if wrong.** If the relay is later repaired outside roost and the
+Codex class of the spike is rerun and passes, classify provenance from the
+stable discriminator `pluginId == "openclaw-codex-app-server"` and reopen this
+decision. No contract or schema change is implied either way.

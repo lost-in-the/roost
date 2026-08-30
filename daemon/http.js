@@ -53,6 +53,7 @@ export async function startHttpServer({ host, port, socketPath, laptopLog, rende
             connected: status.mqtt?.connected ?? false,
             topic: status.mqtt?.topic,
           },
+          gateways: Array.isArray(status.gateways) ? status.gateways : [],
         });
       }
       return json(res, 405, { error: 'method not allowed' });

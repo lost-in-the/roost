@@ -75,6 +75,7 @@ test('status reports health metadata without exposing renderer secrets', async (
     assert.equal(Number.isInteger(body.uptimeSec), true);
     assert.ok(body.uptimeSec >= 0);
     assert.deepEqual(body.mqtt, { connected: false });
+    assert.deepEqual(body.gateways, []);
 
     const serialized = JSON.stringify(body);
     assert.doesNotMatch(serialized, /"username":/);
@@ -90,11 +91,13 @@ test('status surfaces injected daemon-owned status values', async () => {
     assert.equal(body.source, 'openclaw');
     assert.equal(body.version, '1.2.3-test');
     assert.deepEqual(body.mqtt, { connected: true, topic: 'roost/custom/topic' });
+    assert.deepEqual(body.gateways, [{ alias: 'labby', stale: false }, { alias: 'omar', stale: true }]);
   }, {
     getStatus: () => ({
       source: 'openclaw',
       version: '1.2.3-test',
       mqtt: { connected: true, topic: 'roost/custom/topic' },
+      gateways: [{ alias: 'labby', stale: false }, { alias: 'omar', stale: true }],
     }),
   });
 });

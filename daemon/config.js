@@ -1,4 +1,5 @@
 import { defaultLogPath } from './laptop-log.js';
+import { parseGatewayAliases } from './openclaw/gateway-targets.js';
 
 /**
  * Configuration comes from plain environment variables.
@@ -96,7 +97,13 @@ export function loadConfig(env = process.env) {
     throw new Error(`ROOST_SOURCE ${JSON.stringify(source)} is not one of: ${VALID_SOURCES.join(', ')}`);
   }
 
+  // Conservative by default: the running daemon is paired to Labby only today.
+  // Flipping production to labby,omar is the later deploy change, but typos in
+  // the configured list should still fail at load even before OpenClaw is used.
+  const openclawGateways = parseGatewayAliases(env.ROOST_OPENCLAW_GATEWAYS, ['labby']);
+
   return {
+    openclawGateways,
     source,
     mockScript: env.ROOST_MOCK_SCRIPT || 'demo',
     heartbeatMs,
