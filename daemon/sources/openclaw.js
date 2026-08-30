@@ -3,6 +3,7 @@ import { SESSION_VIEWER_PRESENCE_MAX_KEYS } from '@openclaw/gateway-protocol/sch
 import { StateSource } from './state-source.js';
 import { deviceSigningDeps } from '../openclaw/ed25519.js';
 import { mapSessionsToAgents } from '../openclaw/map-sessions.js';
+import { PendingApprovalStore, projectApproval, SAFE_DECISIONS } from '../openclaw/approvals.js';
 
 /**
  * OpenClawStateSource — agent presence, read from the OpenClaw gateway.
@@ -58,6 +59,20 @@ const READ_ONLY_SCOPES = ['operator.read'];
  * implements, and roost at M1 has neither the scope nor the UI for approvals.
  */
 const CAPS = [GATEWAY_CLIENT_CAPS.TOOL_EVENTS];
+const CONNECTION_STATES = new Set(['connected', 'reconciling', 'disconnected']);
+
+function approvalPrompt(prompt) {
+  // Gateway approval presentation kinds (for example `plugin`) are distinct
+  // from roost prompt kinds (`approve_reject` / `handoff`). Only the gateway
+  // vocabulary goes back out over approval.resolve; aggregate.js must see only
+  // roost's vocabulary.
+  return {
+    id: prompt.id,
+    kind: prompt.actionable ? 'approve_reject' : 'handoff',
+    reversible: prompt.reversible,
+    expiresAt: prompt.expiresAtMs,
+  };
+}
 
 function finiteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
@@ -80,6 +95,11 @@ function compareViewerCandidates(a, b) {
     || Number(Boolean(b.session?.unread)) - Number(Boolean(a.session?.unread))
     || relevanceTimestamp(b.session) - relevanceTimestamp(a.session)
     || a.key.localeCompare(b.key);
+}
+
+function sinceForFinalState(previous, id, state, now) {
+  const prior = previous?.get(id);
+  return prior && prior.state === state ? prior.since : now;
 }
 
 export function selectViewerSessionKeys(sessions = [], digests, limit = SESSION_VIEWER_PRESENCE_MAX_KEYS) {
@@ -132,6 +152,9 @@ export class OpenClawStateSource extends StateSource {
     /** id -> { state, since }. `since` means "entered this state", which no
      *  gateway field expresses; see daemon/openclaw/map-sessions.js. */
     this.previous = new Map();
+    this.approvals = new PendingApprovalStore();
+    this.connectionState = 'disconnected';
+    this.subscribedApprovalKeys = new Set();
   }
 
   start() {
@@ -153,11 +176,12 @@ export class OpenClawStateSource extends StateSource {
       onHelloOk: () => { void this.resync(); },
       onEvent: (evt) => {
         if (evt?.event === 'session.observer') { this.absorbDigest(evt.payload); return; }
+        if (evt?.event === 'session.approval') { this.absorbApprovalEvent(evt.payload); return; }
         if (SESSION_EVENTS.has(evt?.event)) this.schedule();
       },
       onConnectError: (err) => this.emit('warning', `openclaw connect: ${err?.message ?? err}`),
-      onReconnectPaused: () => this.emit('connection', { state: 'reconciling' }),
-      onClose: () => this.emit('connection', { state: 'disconnected' }),
+      onReconnectPaused: () => this.setConnectionState('reconciling'),
+      onClose: () => this.setConnectionState('disconnected'),
     });
     this.client.start();
   }
@@ -165,7 +189,8 @@ export class OpenClawStateSource extends StateSource {
   /** Re-establish the subscription, then replace the projection. */
   async resync() {
     if (this.stopped) return;
-    this.emit('connection', { state: 'reconciling' });
+    this.setConnectionState('reconciling');
+    this.subscribedApprovalKeys.clear();
     try {
       // Subscribe BEFORE snapshotting: the reverse order leaves a window where
       // a change lands after the read and before the subscription exists.
@@ -176,10 +201,38 @@ export class OpenClawStateSource extends StateSource {
       // is per CONNECTION, so this must be redone on every reconnect.
       await this.client.request('sessions.observer.visibility', { visible: true });
       await this.snapshot();
-      if (!this.stopped) this.emit('connection', { state: 'connected' });
+      if (!this.stopped) this.setConnectionState('connected');
     } catch (err) {
       this.emit('warning', `openclaw resync: ${err?.message ?? err}`);
     }
+  }
+
+  setConnectionState(state) {
+    if (!CONNECTION_STATES.has(state)) return;
+    this.connectionState = state;
+    if (state !== 'connected') this.subscribedApprovalKeys.clear();
+    this.emit('connection', { state });
+  }
+
+  async subscribeApprovals(sessionKeys) {
+    for (const key of sessionKeys) {
+      if (this.subscribedApprovalKeys.has(key)) continue;
+      try {
+        const response = await this.client.request('sessions.messages.subscribe', {
+          key,
+          includeApprovals: true,
+        });
+        this.subscribedApprovalKeys.add(key);
+        this.absorbApprovalReplay(key, response?.approvalReplay);
+      } catch (err) {
+        this.emit('warning', `openclaw approvals.subscribe ${JSON.stringify(key)}: ${err?.message ?? err}`);
+      }
+    }
+  }
+
+  async currentSessions() {
+    const res = await this.client.request('sessions.list', {});
+    return res?.sessions ?? [];
   }
 
   async snapshot() {
@@ -203,13 +256,14 @@ export class OpenClawStateSource extends StateSource {
   }
 
   async runSnapshotOnce() {
-    const res = await this.client.request('sessions.list', {});
+    const sessions = await this.currentSessions();
     if (this.stopped) return;
-    const sessions = res?.sessions ?? [];
 
     // Drop digests for sessions the gateway no longer lists.
     const live = new Set(sessions.map((s) => s?.key));
     for (const key of this.digests.keys()) if (!live.has(key)) this.digests.delete(key);
+    this.approvals.pruneSessions(live);
+    for (const key of this.subscribedApprovalKeys) if (!live.has(key)) this.subscribedApprovalKeys.delete(key);
 
     // Join the per-session observer audience. `sessions.observer.visibility`
     // is a global opt-in; the broadcast targets
@@ -219,8 +273,23 @@ export class OpenClawStateSource extends StateSource {
     const keys = selectViewerSessionKeys(sessions, this.digests);
     try { await this.client.request('sessions.viewers.set', { sessionKeys: keys }); }
     catch (err) { this.emit('warning', `openclaw viewers.set: ${err?.message ?? err}`); }
+    await this.subscribeApprovals(keys);
 
-    const agents = mapSessionsToAgents(sessions, this.digests, this.previous);
+    const snapshotNow = Date.now();
+    const agents = mapSessionsToAgents(sessions, this.digests, this.previous, snapshotNow).map((agent) => {
+      const prompt = this.approvals.getPrompt(agent.id, {
+        actionable: this.connectionState === 'connected',
+      });
+      if (!prompt) return agent;
+      return {
+        ...agent,
+        label: prompt.label,
+        state: 'needs_attention',
+        urgency: 'blocking',
+        since: sinceForFinalState(this.previous, agent.id, 'needs_attention', snapshotNow),
+        prompt: approvalPrompt(prompt),
+      };
+    });
     this.previous = new Map(agents.map((a) => [a.id, { state: a.state, since: a.since }]));
     this.emit('agents', agents);
     this.afterSnapshot(agents);
@@ -251,6 +320,64 @@ export class OpenClawStateSource extends StateSource {
     // Re-emit promptly: the gateway sends these with dropIfSlow, and this is
     // the only signal that distinguishes a grinding run from a stuck one.
     this.schedule();
+  }
+
+  absorbApprovalReplay(sessionKey, replay) {
+    const approvals = Array.isArray(replay?.approvals) ? replay.approvals : [];
+    const projected = approvals
+      .map((approval) => projectApproval(approval, {
+        fromTruncatedReplay: replay?.truncated === true,
+        onDrop: (msg) => this.emit('warning', msg),
+      }))
+      .filter(Boolean);
+    this.approvals.replaceReplay(sessionKey, projected, { truncated: replay?.truncated === true });
+  }
+
+  absorbApprovalEvent(payload) {
+    const sessionKey = typeof payload?.sessionKey === 'string' ? payload.sessionKey : null;
+    if (!sessionKey) return;
+    if (payload?.phase === 'pending' && payload?.approval?.status === 'pending') {
+      const projected = projectApproval(payload.approval, { onDrop: (msg) => this.emit('warning', msg) });
+      if (!projected) return;
+      this.approvals.upsertPending(sessionKey, {
+        ...projected,
+        actionable: this.connectionState === 'connected' && projected.actionable,
+      });
+      this.schedule();
+      return;
+    }
+    if (payload?.phase === 'terminal' && payload?.approval?.status !== 'pending') {
+      this.approvals.resolve(sessionKey, payload.approval);
+      this.schedule();
+    }
+  }
+
+  async resolveApproval({ id, decision }) {
+    if (!SAFE_DECISIONS.has(decision)) throw new Error('approval decision must be allow-once or deny');
+    this.approvals.expire();
+    for (const [sessionKey, entries] of this.approvals.pendingBySession) {
+      const approval = entries.get(id);
+      if (!approval) continue;
+      if (this.connectionState !== 'connected') throw new Error('approval source is not answerable while stale or reconciling');
+      if (!approval.actionable) throw new Error('approval is not actionable');
+      if (approval.expiresAtMs !== null && approval.expiresAtMs <= this.approvals.now()) {
+        entries.delete(id);
+        throw new Error('approval already expired');
+      }
+      try {
+        const result = await this.client.request('approval.resolve', { id, kind: approval.gatewayKind, decision });
+        const canonical = result?.approval;
+        if (canonical?.status && canonical.status !== 'pending') this.approvals.resolve(sessionKey, canonical);
+        this.schedule();
+        return result;
+      } catch (err) {
+        entries.set(id, { ...approval, actionable: false });
+        this.schedule();
+        throw err;
+      }
+    }
+    if (this.approvals.getResolved(id)) throw new Error('approval already answered');
+    throw new Error(`unknown approval ${JSON.stringify(id)}`);
   }
 
   schedule() {

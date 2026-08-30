@@ -191,6 +191,7 @@ test('the reconcile timer runs only while working and stops after an idle snapsh
   gw.state.sessions = [sess('a', false)];
   gw.state.options.onEvent({ event: 'sessions.changed', payload: {} });
   await timers.tick(0);
+  await settle();
 
   assert.equal(seen.at(-1)[0].state, 'idle');
   assert.equal(timers.count(60000), 0, 'idle state should clear reconcile');
@@ -211,12 +212,15 @@ test('a real event before the trailing timer replaces it instead of double-snaps
 
   gw.state.options.onEvent({ event: 'sessions.changed', payload: {} });
   await timers.tick(0);
+  await settle();
   assert.equal(seen.length, 2, 'the real event should trigger the replacement snapshot');
   assert.equal(timers.count(2000), 1, 'exactly one replacement trailing timer should remain');
 
   await timers.tick(2000);
+  await settle();
   assert.equal(seen.length, 3, 'only the replacement trailing timer should fire');
   await timers.tick(2000);
+  await settle();
   assert.equal(seen.length, 3, 'no canceled trailing timer should still fire later');
   source.stop();
 });
@@ -426,6 +430,356 @@ test('declares itself a viewer of the live sessions, because the audience is per
     `requests were ${JSON.stringify(gw.state.requests)}`);
   const call = gw.state.requestParams.find((r) => r.method === 'sessions.viewers.set');
   assert.deepEqual(call.params.sessionKeys, ['a', 'b'], 'must name every live session');
+  const approvalCalls = gw.state.requestParams.filter((r) => r.method === 'sessions.messages.subscribe');
+  assert.deepEqual(approvalCalls.map((r) => r.params), [
+    { key: 'a', includeApprovals: true },
+    { key: 'b', includeApprovals: true },
+  ]);
+  source.stop();
+});
+
+test('projects a pending approval onto the matching agent without exposing raw presentation fields', async () => {
+  const gw = fakeGateway({
+    sessions: [sess('a', true)],
+    onRequest(method, params) {
+      if (method !== 'sessions.messages.subscribe') return undefined;
+      return Promise.resolve({
+        approvalReplay: {
+          approvals: [{
+            id: 'appr-1',
+            status: 'pending',
+            expiresAtMs: Date.now() + 5000,
+            presentation: {
+              kind: 'plugin',
+              allowedDecisions: ['allow-once', 'deny'],
+              title: 'Approve short change?',
+              detail: 'hidden detail',
+              metadata: { reversible: true },
+            },
+          }],
+          truncated: false,
+        },
+      });
+    },
+  });
+  const source = makeSource(gw);
+  const seen = [];
+  source.on('agents', (a) => seen.push(a));
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+  gw.state.options.onEvent({ event: 'sessions.changed', payload: {} });
+  await settle();
+
+  const agent = seen.at(-1)[0];
+  assert.equal(agent.prompt.id, 'appr-1');
+  assert.equal(agent.prompt.kind, 'approve_reject');
+  assert.equal(agent.prompt.reversible, true);
+  assert.equal(agent.label, 'Approve short change?');
+  assert.equal(JSON.stringify(agent).includes('hidden detail'), false);
+  source.stop();
+});
+
+test('a blank approval label becomes a visible handoff instead of disappearing', async () => {
+  const gw = fakeGateway({
+    sessions: [sess('a', true)],
+    onRequest(method) {
+      if (method !== 'sessions.messages.subscribe') return undefined;
+      return Promise.resolve({
+        approvalReplay: {
+          approvals: [{
+            id: 'appr-1',
+            status: 'pending',
+            expiresAtMs: Date.now() + 5000,
+            presentation: {
+              kind: 'plugin',
+              allowedDecisions: ['allow-once', 'deny'],
+              title: '   ',
+              metadata: { reversible: true },
+            },
+          }],
+          truncated: false,
+        },
+      });
+    },
+  });
+  const source = makeSource(gw);
+  const seen = [];
+  source.on('agents', (a) => seen.push(a));
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+
+  const agent = seen.at(-1)[0];
+  assert.equal(agent.state, 'needs_attention');
+  assert.equal(agent.label, null);
+  assert.equal(agent.prompt.kind, 'handoff');
+  source.stop();
+});
+
+test('a stale or reconciling source makes approvals non-actionable', async () => {
+  const gw = fakeGateway({
+    sessions: [sess('a', true)],
+    onRequest(method) {
+      if (method !== 'sessions.messages.subscribe') return undefined;
+      return Promise.resolve({
+        approvalReplay: {
+          approvals: [{
+            id: 'appr-1',
+            status: 'pending',
+            expiresAtMs: Date.now() + 5000,
+            presentation: {
+              kind: 'plugin',
+              allowedDecisions: ['allow-once', 'deny'],
+              title: 'Approve short change?',
+              metadata: { reversible: true },
+            },
+          }],
+          truncated: false,
+        },
+      });
+    },
+  });
+  const source = makeSource(gw);
+  const seen = [];
+  source.on('agents', (a) => seen.push(a));
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+  gw.state.options.onReconnectPaused();
+  gw.state.options.onEvent({ event: 'sessions.changed', payload: {} });
+  await settle();
+  assert.equal(seen.at(-1)[0].prompt.kind, 'handoff');
+  source.stop();
+});
+
+test('resolution sends exactly one approval.resolve and an ambiguous failure freezes instead of retrying', async () => {
+  const gw = fakeGateway({
+    sessions: [sess('a', true)],
+    onRequest(method) {
+      if (method === 'sessions.messages.subscribe') {
+        return Promise.resolve({
+          approvalReplay: {
+            approvals: [{
+              id: 'appr-1',
+              status: 'pending',
+              expiresAtMs: Date.now() + 5000,
+              presentation: {
+                kind: 'plugin',
+                allowedDecisions: ['allow-once', 'deny'],
+                title: 'Approve short change?',
+                metadata: { reversible: true },
+              },
+            }],
+            truncated: false,
+          },
+        });
+      }
+      if (method === 'approval.resolve') return Promise.reject(new Error('socket closed'));
+      return undefined;
+    },
+  });
+  const source = makeSource(gw);
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+  source.setConnectionState('connected');
+  await assert.rejects(() => source.resolveApproval({ id: 'appr-1', decision: 'deny' }), /socket closed/);
+  await assert.rejects(() => source.resolveApproval({ id: 'appr-1', decision: 'deny' }), /not actionable/);
+  assert.equal(gw.state.requests.filter((m) => m === 'approval.resolve').length, 1);
+  assert.deepEqual(gw.state.requestParams.find((r) => r.method === 'approval.resolve')?.params, {
+    id: 'appr-1',
+    kind: 'plugin',
+    decision: 'deny',
+  });
+  source.stop();
+});
+
+test('another surface winning surfaces the canonical terminal decision rather than the local attempt', async () => {
+  const gw = fakeGateway({
+    sessions: [sess('a', true)],
+    onRequest(method) {
+      if (method === 'sessions.messages.subscribe') {
+        return Promise.resolve({
+          approvalReplay: {
+            approvals: [{
+              id: 'appr-1',
+              status: 'pending',
+              expiresAtMs: Date.now() + 5000,
+              presentation: {
+                kind: 'plugin',
+                allowedDecisions: ['allow-once', 'deny'],
+                title: 'Approve short change?',
+                metadata: { reversible: true },
+              },
+            }],
+            truncated: false,
+          },
+        });
+      }
+      if (method === 'approval.resolve') {
+        return Promise.resolve({
+          applied: false,
+          approval: {
+            id: 'appr-1',
+            status: 'denied',
+            decision: 'deny',
+            resolvedAtMs: 4000,
+            presentation: { kind: 'plugin', allowedDecisions: ['allow-once', 'deny'] },
+          },
+        });
+      }
+      return undefined;
+    },
+  });
+  const source = makeSource(gw);
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+  source.setConnectionState('connected');
+  const result = await source.resolveApproval({ id: 'appr-1', decision: 'allow-once' });
+  assert.equal(result.applied, false);
+  await assert.rejects(() => source.resolveApproval({ id: 'appr-1', decision: 'deny' }), /already answered/);
+  assert.equal(source.approvals.getResolved('appr-1').decision, 'deny');
+  source.stop();
+});
+
+test('prompt-bearing agents keep the same since across snapshots until the final state really changes', async () => {
+  let now = 1000;
+  const realNow = Date.now;
+  Date.now = () => now;
+  try {
+    const gw = fakeGateway({
+      sessions: [sess('a', true)],
+      onRequest(method) {
+        if (method !== 'sessions.messages.subscribe') return undefined;
+        return Promise.resolve({
+          approvalReplay: {
+            approvals: [{
+              id: 'appr-1',
+              status: 'pending',
+              expiresAtMs: 5000,
+              presentation: {
+                kind: 'plugin',
+                allowedDecisions: ['allow-once', 'deny'],
+                title: 'Approve short change?',
+                metadata: { reversible: true },
+              },
+            }],
+            truncated: false,
+          },
+        });
+      },
+    });
+    const source = makeSource(gw);
+    const seen = [];
+    source.on('agents', (a) => seen.push(a));
+    source.start();
+    gw.state.options.onHelloOk({ auth: {} });
+    await settle();
+
+    now = 2000;
+    gw.state.options.onEvent({ event: 'sessions.changed', payload: {} });
+    await settle();
+    now = 3000;
+    gw.state.options.onEvent({ event: 'sessions.changed', payload: {} });
+    await settle();
+
+    assert.equal(seen[0][0].since, 1000);
+    assert.equal(seen[1][0].since, 1000);
+    assert.equal(seen[2][0].since, 1000);
+
+    gw.state.options.onEvent({ event: 'session.approval', payload: {
+      sessionKey: 'a',
+      phase: 'terminal',
+      approval: { id: 'appr-1', status: 'denied', decision: 'deny', resolvedAtMs: 3500, presentation: { kind: 'plugin' } },
+    } });
+    now = 4000;
+    gw.state.options.onEvent({ event: 'sessions.changed', payload: {} });
+    await settle();
+
+    assert.equal(seen.at(-1)[0].state, 'thinking');
+    assert.equal(seen.at(-1)[0].since, 4000);
+    source.stop();
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test('prunes approval sessions that vanish from the live snapshot', async () => {
+  const gw = fakeGateway({
+    sessions: [sess('a', true)],
+    onRequest(method) {
+      if (method !== 'sessions.messages.subscribe') return undefined;
+      return Promise.resolve({
+        approvalReplay: {
+          approvals: [{
+            id: 'appr-1',
+            status: 'pending',
+            expiresAtMs: Date.now() + 5000,
+            presentation: {
+              kind: 'plugin',
+              allowedDecisions: ['allow-once', 'deny'],
+              title: 'Approve short change?',
+              metadata: { reversible: true },
+            },
+          }],
+          truncated: false,
+        },
+      });
+    },
+  });
+  const source = makeSource(gw);
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+  assert.equal(source.approvals.pendingBySession.has('a'), true);
+
+  gw.state.sessions = [sess('b', false)];
+  gw.state.options.onEvent({ event: 'sessions.changed', payload: {} });
+  await settle();
+
+  assert.equal(source.approvals.pendingBySession.has('a'), false);
+  source.stop();
+});
+
+test('does not re-subscribe unchanged approval viewers on later snapshots', async () => {
+  const gw = fakeGateway({ sessions: [sess('a', true), sess('b', false)] });
+  const source = makeSource(gw);
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+  assert.equal(gw.state.requests.filter((m) => m === 'sessions.messages.subscribe').length, 2);
+
+  gw.state.options.onEvent({ event: 'sessions.changed', payload: {} });
+  await settle();
+
+  assert.equal(gw.state.requests.filter((m) => m === 'sessions.messages.subscribe').length, 2);
+  source.stop();
+});
+
+test('one approval subscription failure warns per key and does not block later subscriptions', async () => {
+  const gw = fakeGateway({
+    sessions: [sess('a', true), sess('b', true), sess('c', false)],
+    onRequest(method, params) {
+      if (method !== 'sessions.messages.subscribe') return undefined;
+      if (params.key === 'b') return Promise.reject(new Error('boom'));
+      return Promise.resolve({ approvalReplay: { approvals: [], truncated: false } });
+    },
+  });
+  const source = makeSource(gw);
+  const warnings = [];
+  source.on('warning', (warning) => warnings.push(warning));
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+
+  const approvals = gw.state.requestParams.filter((r) => r.method === 'sessions.messages.subscribe');
+  assert.deepEqual(approvals.map((r) => r.params.key), ['a', 'b', 'c']);
+  assert.equal(source.subscribedApprovalKeys.has('a'), true);
+  assert.equal(source.subscribedApprovalKeys.has('b'), false);
+  assert.equal(source.subscribedApprovalKeys.has('c'), true);
+  assert.match(warnings.find((warning) => warning.includes('"b"')) ?? '', /boom/);
   source.stop();
 });
 
