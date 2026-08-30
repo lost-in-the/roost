@@ -3,12 +3,12 @@
 **Status:** protocol spike completed 2026-08-27; Claude-native approvals passed
 on both Gateways, and the operator took the scope decision on 2026-08-30 to
 narrow M2 to that supported class. [`DECISIONS.md`](DECISIONS.md)
-D-016 records the boundary. The build sequence is now started at §7 step 1.
+D-016 records the boundary. The build sequence now runs through §7 step 3.
 Written 2026-08-21, immediately after M1 shipped, while the reasoning was
 fresh. The 2026-08-23 hardware blocker is resolved. Homelab backlog 128 calls
 this work M3; this repository retains the original Roost milestone name, M2.
 
-Built so far, in the order §8 required:
+Built so far, in the order §7 required:
 
 - **The bind-address guard** (2026-08-25). `daemon/approval-exposure.js`. Refuses
   to start when roost holds `operator.approvals` on a non-loopback bind.
@@ -16,10 +16,23 @@ Built so far, in the order §8 required:
   schema, and the mock's demo loop.
 - **The §2 handoff rule** (2026-08-25). `prompt.kind: "handoff"`, decided at the
   same boundary that truncates. §2 records the shape and why.
+- **The coordinator and per-Gateway qualification** (2026-08-30). §7 step 1, in
+  `daemon/sources/coordinator.js` and the OpenClaw gateway target wiring.
+  Prompt ids are source-qualified, and approval routing stays pinned to the
+  owning alias instead of broadcasting.
+- **The sanitized projection and replay boundary** (2026-08-30). §7 step 2, in
+  `daemon/openclaw/approvals.js` and `daemon/sources/openclaw.js`. Pending
+  approvals are projected into Roost's safe shape, canonical terminal decisions
+  are recorded, and raw presentation payloads stop at the in-memory boundary.
+- **The loopback approval return path** (2026-08-30). §7 step 3, in
+  `daemon/http.js` and the OpenClaw source resolver. The daemon now accepts
+  `POST /api/approval`, applies first-answer reconciliation, and fails closed
+  when the gateway cannot prove a canonical terminal result.
 
-Not built yet: the return path (§3) and the renderer's buttons. Nothing on the
-panel draws a button today; a `prompt` in the payload is currently a field only
-the schema and the tests observe.
+Not built yet: the renderer's buttons (§7 step 4), integration testing (§7 step
+5), and deploy (§7 step 6). Nothing on the panel draws a button today; a
+`prompt` in the payload is currently a field only the schema and the tests
+observe.
 
 **Goal:** answer an agent's approve/reject prompt from the panel, without
 opening a laptop. That is the second half of the project's success metric —

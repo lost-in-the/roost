@@ -1,3 +1,4 @@
+import { codedError } from './openclaw.js';
 import { StateSource } from './state-source.js';
 
 function qualifyAgent(alias, agent) {
@@ -69,13 +70,13 @@ export class MultiGatewaySource extends StateSource {
 
   async resolveApproval(qualifiedPromptId, decision) {
     if (typeof qualifiedPromptId !== 'string' || !qualifiedPromptId.includes(':')) {
-      throw new Error('qualified prompt id must include a gateway alias');
+      throw codedError('unknown_prompt', 'qualified prompt id must include a gateway alias');
     }
     const [alias, ...rest] = qualifiedPromptId.split(':');
     const id = rest.join(':');
     const child = this.children.find((entry) => entry.alias === alias);
-    if (!child) throw new Error(`unknown gateway alias ${JSON.stringify(alias)}`);
-    if (this.stale.has(alias)) throw new Error(`gateway ${alias} is stale or reconciling`);
+    if (!child) throw codedError('unknown_prompt', `unknown gateway alias ${JSON.stringify(alias)}`);
+    if (this.stale.has(alias)) throw codedError('gateway_stale', `gateway ${alias} is stale or reconciling`);
     return child.source.resolveApproval({ id, decision });
   }
 

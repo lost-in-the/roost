@@ -214,11 +214,10 @@ Roost identities now each hold exactly `operator.read` plus
 `openclaw-device.json` and `openclaw-omar-device.json`.
 
 `operator.read` is sufficient for M1 presence. `operator.approvals`
-additionally authorizes resolving pending approvals, although the production
-daemon still has no approval route yet. Pairing Omar alone does not make roost
-dual-Gateway; M2 step 1 adds the coordinator and per-Gateway wiring, while the
-default deployment remains `labby` only until the later owner-approved config
-flip.
+additionally authorizes resolving pending approvals through the loopback
+approval route. Pairing Omar alone does not make roost dual-Gateway; M2 step 1
+adds the coordinator and per-Gateway wiring, while the default deployment
+remains `labby` only until the later owner-approved config flip in §7 step 6.
 
 When `ROOST_SOURCE=openclaw`, `ROOST_OPENCLAW_GATEWAYS` selects which known
 Gateway aliases roost connects to. The code supports `labby,omar` today, but

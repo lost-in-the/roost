@@ -19,17 +19,17 @@ async function withServer(fn, options = {}) {
     rendererConfig: { wsUrl: 'ws://broker.example:8083/mqtt', topic: 'roost/agents/state', staleMs: 30_000, username: 'panel', password: 'pw' },
     ...options,
   });
-  const fetchJson = async (path, { method = 'GET' } = {}) => {
-    const res = await requestOverSocket({ socketPath: server.socketPath, path, method });
+  const fetchJson = async (path, init = {}) => {
+    const res = await requestOverSocket({ socketPath: server.socketPath, path, ...init });
     return { ...res, json: JSON.parse(res.body) };
   };
-  try { await fn({ fetch: (path, init) => requestOverSocket({ socketPath: server.socketPath, path, method: init?.method }), fetchJson, log, server }); }
+  try { await fn({ fetch: (path, init) => requestOverSocket({ socketPath: server.socketPath, path, ...init }), fetchJson, log, server }); }
   finally { await server.close(); rmSync(dir, { recursive: true, force: true }); }
 }
 
-function requestOverSocket({ socketPath, path, method = 'GET' }) {
+function requestOverSocket({ socketPath, path, method = 'GET', headers = {}, body }) {
   return new Promise((resolve, reject) => {
-    const req = request({ socketPath, path, method }, (res) => {
+    const req = request({ socketPath, path, method, headers }, (res) => {
       const chunks = [];
       res.on('data', (chunk) => chunks.push(chunk));
       res.on('end', () => resolve({
@@ -39,6 +39,7 @@ function requestOverSocket({ socketPath, path, method = 'GET' }) {
       }));
     });
     req.on('error', reject);
+    if (body !== undefined) req.write(body);
     req.end();
   });
 }
@@ -138,6 +139,196 @@ test('the counter can be read back without recording anything', async () => {
     assert.equal((await fetchJson('/api/laptop-open')).json.count, 1);
     assert.equal(log.count(), 1, 'a read must not increment');
   });
+});
+
+test('approval resolution is unavailable for the mock source', async () => {
+  await withServer(async ({ fetchJson }) => {
+    const res = await fetchJson('/api/approval', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'labby:appr-1', decision: 'deny' }),
+    });
+    assert.equal(res.status, 501);
+    assert.deepEqual(res.json, {
+      ok: false,
+      code: 'approvals_unavailable',
+      error: 'approval resolution is unavailable for this source',
+    });
+  });
+});
+
+test('approval route rejects non-POST methods', async () => {
+  await withServer(async ({ fetchJson }) => {
+    const res = await fetchJson('/api/approval');
+    assert.equal(res.status, 405);
+    assert.deepEqual(res.json, {
+      ok: false,
+      code: 'method_not_allowed',
+      error: 'method not allowed',
+    });
+  });
+});
+
+test('approval route resolves both supported decisions', async () => {
+  const calls = [];
+  const logs = [];
+  await withServer(async ({ fetchJson }) => {
+    const deny = await fetchJson('/api/approval', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({ id: 'labby:appr-1', decision: 'deny' }),
+    });
+    const allow = await fetchJson('/api/approval', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'labby:appr-2', decision: 'allow-once' }),
+    });
+    assert.equal(deny.status, 200);
+    assert.deepEqual(deny.json, { ok: true, id: 'labby:appr-1', decision: 'deny', status: 'denied' });
+    assert.equal(allow.status, 200);
+    assert.deepEqual(allow.json, { ok: true, id: 'labby:appr-2', decision: 'allow-once', status: 'allowed' });
+  }, {
+    resolveApproval: async (id, decision) => {
+      calls.push({ id, decision });
+      return {
+        approval: {
+          id: id.split(':').slice(1).join(':'),
+          status: decision === 'deny' ? 'denied' : 'allowed',
+          decision,
+        },
+      };
+    },
+    onLog: (line) => logs.push(line),
+  });
+  assert.deepEqual(calls, [
+    { id: 'labby:appr-1', decision: 'deny' },
+    { id: 'labby:appr-2', decision: 'allow-once' },
+  ]);
+  assert.equal(logs.some((line) => /Approve short change\?|title|detail|command/i.test(line)), false);
+});
+
+test('approval route reports the applied decision from the canonical gateway result', async () => {
+  await withServer(async ({ fetchJson }) => {
+    const res = await fetchJson('/api/approval', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'labby:appr-1', decision: 'allow-once' }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.json, { ok: true, id: 'labby:appr-1', decision: 'deny', status: 'denied' });
+  }, {
+    resolveApproval: async () => ({
+      approval: {
+        id: 'appr-1',
+        status: 'denied',
+        decision: 'deny',
+      },
+    }),
+  });
+});
+
+test('approval route rejects non-json, invalid json, and oversized bodies', async () => {
+  await withServer(async ({ fetchJson }) => {
+    const nonJson = await fetchJson('/api/approval', {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain' },
+      body: 'nope',
+    });
+    const malformed = await fetchJson('/api/approval', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{"id":',
+    });
+    const oversized = await fetchJson('/api/approval', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'x'.repeat(5000), decision: 'deny' }),
+    });
+    assert.deepEqual([nonJson.status, malformed.status, oversized.status], [400, 400, 400]);
+    assert.equal(nonJson.json.code, 'bad_request');
+    assert.equal(malformed.json.code, 'bad_request');
+    assert.equal(oversized.json.code, 'bad_request');
+  }, {
+    resolveApproval: async () => ({ approval: { status: 'denied' } }),
+  });
+});
+
+test('approval route maps stable source error codes without exposing raw presentation fields', async () => {
+  const logs = [];
+  const cases = [
+    ['unknown_prompt', 404],
+    ['expired', 409],
+    ['not_actionable', 409],
+    ['gateway_stale', 409],
+    ['already_answered', 409],
+    ['transport_uncertain', 502],
+  ];
+  await withServer(async ({ fetchJson }) => {
+    for (const [code, status] of cases) {
+      const res = await fetchJson('/api/approval', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'labby:appr-1', decision: 'deny' }),
+      });
+      assert.equal(res.status, status);
+      assert.equal(res.json.ok, false);
+      assert.equal(res.json.code, code);
+      assert.equal(JSON.stringify(res.json).includes('Approve short change?'), false);
+    }
+  }, {
+    resolveApproval: (() => {
+      let index = 0;
+      return async () => {
+        const code = cases[index++][0];
+        const err = new Error('Approve short change? should never leak');
+        err.code = code;
+        throw err;
+      };
+    })(),
+    onLog: (line) => logs.push(line),
+  });
+  assert.equal(logs.some((line) => /Approve short change\?|detail|command/i.test(line)), false);
+});
+
+test('approval route defaults unexpected failures to transport_uncertain', async () => {
+  await withServer(async ({ fetchJson }) => {
+    const res = await fetchJson('/api/approval', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'labby:appr-1', decision: 'deny' }),
+    });
+    assert.equal(res.status, 502);
+    assert.deepEqual(res.json, {
+      ok: false,
+      code: 'transport_uncertain',
+      error: 'approval resolution status is uncertain',
+    });
+  }, {
+    resolveApproval: async () => {
+      throw new TypeError('boom');
+    },
+  });
+});
+
+test('approval route logs source-provided failure correlations', async () => {
+  const logs = [];
+  await withServer(async ({ fetchJson }) => {
+    const res = await fetchJson('/api/approval', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'labby:appr-1', decision: 'deny' }),
+    });
+    assert.equal(res.status, 409);
+  }, {
+    resolveApproval: async () => {
+      const err = new Error('already answered elsewhere');
+      err.code = 'already_answered';
+      err.correlation = 'appr_abcd1234';
+      throw err;
+    },
+    onLog: (line) => logs.push(line),
+  });
+  assert.equal(logs.some((line) => line.includes('correlation=appr_abcd1234')), true);
 });
 
 test('repeated taps accumulate', async () => {

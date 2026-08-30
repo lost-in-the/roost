@@ -100,6 +100,9 @@ async function main() {
     port: config.http.port,
     laptopLog,
     rendererConfig: config.renderer,
+    resolveApproval: config.source === 'openclaw'
+      ? (id, decision) => source.resolveApproval(id, decision)
+      : undefined,
     getStatus: () => ({
       source: config.source,
       version: pkg.version,
