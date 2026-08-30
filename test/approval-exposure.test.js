@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   APPROVALS_SCOPE,
+  assertGatewayApprovalsNotExposed,
   isLoopbackHost,
   holdsApprovalsScope,
   approvalExposureError,
@@ -142,4 +143,17 @@ test('the assertion throws on the dangerous combination and is silent otherwise'
   );
   assert.doesNotThrow(() => assertApprovalsNotExposed({ host: '127.0.0.1', scopes: APPROVALS }));
   assert.doesNotThrow(() => assertApprovalsNotExposed({ host: '0.0.0.0', scopes: READ }));
+});
+
+test('the multi-gateway assertion checks every configured device file, not just the first', () => {
+  const seen = [];
+  assert.throws(() => assertGatewayApprovalsNotExposed({
+    host: '0.0.0.0',
+    deviceFiles: ['/tmp/labby.json', '/tmp/omar.json'],
+    readDeviceTokenFn(file) {
+      seen.push(file);
+      return file.endsWith('labby.json') ? { scopes: READ } : { scopes: APPROVALS };
+    },
+  }), /operator\.approvals/);
+  assert.deepEqual(seen, ['/tmp/labby.json', '/tmp/omar.json']);
 });

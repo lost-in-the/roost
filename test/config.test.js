@@ -83,6 +83,19 @@ test('an unknown source name is rejected rather than silently falling back', () 
   assert.throws(() => loadConfig({ ...base, ROOST_SOURCE: 'telepathy' }), /telepathy/);
 });
 
+test('openclaw gateway aliases default conservatively to labby only', () => {
+  assert.deepEqual(loadConfig(base).openclawGateways, ['labby']);
+});
+
+test('openclaw gateway aliases are parsed as an ordered list', () => {
+  const cfg = loadConfig({ ...base, ROOST_OPENCLAW_GATEWAYS: 'omar, labby' });
+  assert.deepEqual(cfg.openclawGateways, ['omar', 'labby']);
+});
+
+test('an invalid openclaw gateway alias is rejected at config load', () => {
+  assert.throws(() => loadConfig({ ...base, ROOST_OPENCLAW_GATEWAYS: 'labby,nope' }), /unknown gateway alias/);
+});
+
 test('the local http server binds to loopback by default', () => {
   const cfg = loadConfig(base);
   assert.equal(cfg.http.host, '127.0.0.1');

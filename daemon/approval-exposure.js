@@ -1,3 +1,4 @@
+import { readDeviceToken } from './openclaw/device-identity.js';
 import { satisfies } from './openclaw/scopes.js';
 
 /**
@@ -106,4 +107,15 @@ export function approvalExposureError({ host, scopes }) {
 export function assertApprovalsNotExposed({ host, scopes }) {
   const problem = approvalExposureError({ host, scopes });
   if (problem) throw new Error(problem);
+}
+
+export function assertGatewayApprovalsNotExposed({
+  host,
+  deviceFiles,
+  readDeviceTokenFn = readDeviceToken,
+}) {
+  for (const deviceFile of deviceFiles ?? []) {
+    const stored = readDeviceTokenFn(deviceFile);
+    assertApprovalsNotExposed({ host, scopes: stored?.scopes ?? [] });
+  }
 }

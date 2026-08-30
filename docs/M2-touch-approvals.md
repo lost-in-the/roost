@@ -1,9 +1,10 @@
 # M2 — Touch approvals: design note
 
 **Status:** protocol spike completed 2026-08-27; Claude-native approvals passed
-on both Gateways, but the required Omar Codex ACP/harness projection failed, so
-feature implementation remains stopped pending a scope decision or runtime
-fix. Written 2026-08-21, immediately after M1 shipped, while the reasoning was
+on both Gateways, and the operator took the scope decision on 2026-08-30 to
+narrow M2 to that supported class. [`DECISIONS.md`](DECISIONS.md)
+D-016 records the boundary. The build sequence is now started at §7 step 1.
+Written 2026-08-21, immediately after M1 shipped, while the reasoning was
 fresh. The 2026-08-23 hardware blocker is resolved. Homelab backlog 128 calls
 this work M3; this repository retains the original Roost milestone name, M2.
 
@@ -51,9 +52,9 @@ real glass**, which was the part of this design that could not be tested before.
 
 Labby presence remains the sole production connection. The Labby scope upgrade,
 separate Omar pairing, and owner-authorized protocol spike are complete, but
-pairing alone does not make Roost dual-Gateway. §6 remains blocked on the
-missing Codex projection; implementation must wire the two existing identities
-only after that scope decision or runtime repair.
+pairing alone does not make Roost dual-Gateway. D-016 narrows M2 to the
+Claude-native class and leaves Codex unsupported, so implementation now starts
+with the dual-Gateway wiring in §7 step 1 rather than any Codex relay work.
 
 ---
 
@@ -438,11 +439,12 @@ The required Codex class failed before the safe projection boundary:
    No `session.approval` pending event or replay row appeared and no file was
    written.
 
-This is a gate failure, not a reason to fall back to raw events. Choose one
-before implementation: explicitly narrow M2 to Claude-native approvals and keep
-Codex unsupported, or repair the Omar Codex native hook relay and rerun this
-class of the spike. Native `/codex bind` remains unsupported for the independent
-reason already stated above: it creates no Gateway approval record.
+This is a gate failure, not a reason to fall back to raw events. The operator
+chose the first branch on 2026-08-30: M2 is narrowed to Claude-native
+approvals and Codex remains unsupported, as recorded in
+[`DECISIONS.md`](DECISIONS.md) D-016. Native `/codex bind` remains
+unsupported for the independent reason already stated above: it creates no
+Gateway approval record.
 
 ### Reconnect and first-answer rules
 
@@ -506,7 +508,8 @@ decisions. They do not block the panel's first complete approval path.
 - [ ] A reversible prompt is approved from the panel and the run continues
 - [ ] Labby and Omar remain visible simultaneously through separate identities
 - [ ] A harmless approval from each Gateway is answered from the panel
-- [ ] Native `/codex bind` approvals remain absent and are documented as unsupported
+- [ ] Native `/codex bind` approvals remain absent and the Codex classes of the
+      2026-08-27 spike remain documented unsupported, per D-016
 - [ ] A destructive prompt requires a deliberate second confirm
 - [ ] Answering the same prompt twice is rejected by the daemon, not the browser
 - [ ] Answering on the laptop makes the panel buttons disappear within 5 seconds

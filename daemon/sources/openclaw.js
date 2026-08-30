@@ -156,6 +156,8 @@ export class OpenClawStateSource extends StateSource {
         if (SESSION_EVENTS.has(evt?.event)) this.schedule();
       },
       onConnectError: (err) => this.emit('warning', `openclaw connect: ${err?.message ?? err}`),
+      onReconnectPaused: () => this.emit('connection', { state: 'reconciling' }),
+      onClose: () => this.emit('connection', { state: 'disconnected' }),
     });
     this.client.start();
   }
@@ -163,6 +165,7 @@ export class OpenClawStateSource extends StateSource {
   /** Re-establish the subscription, then replace the projection. */
   async resync() {
     if (this.stopped) return;
+    this.emit('connection', { state: 'reconciling' });
     try {
       // Subscribe BEFORE snapshotting: the reverse order leaves a window where
       // a change lands after the read and before the subscription exists.
@@ -173,6 +176,7 @@ export class OpenClawStateSource extends StateSource {
       // is per CONNECTION, so this must be redone on every reconnect.
       await this.client.request('sessions.observer.visibility', { visible: true });
       await this.snapshot();
+      if (!this.stopped) this.emit('connection', { state: 'connected' });
     } catch (err) {
       this.emit('warning', `openclaw resync: ${err?.message ?? err}`);
     }

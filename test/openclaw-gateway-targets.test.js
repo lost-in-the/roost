@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   approvalCommand,
   gatewayAliasFromArgv,
+  parseGatewayAliases,
   resolveGatewayTarget,
 } from '../daemon/openclaw/gateway-targets.js';
 
@@ -38,4 +39,25 @@ test('each Gateway has a fixed URL, distinct device file, and source-local appro
 test('approval command refuses an unsafe request id', () => {
   const target = resolveGatewayTarget('omar', '/state');
   assert.throws(() => approvalCommand(target, 'id; echo nope'), /unsafe pairing request id/);
+});
+
+test('gateway alias lists default to the provided fallback', () => {
+  assert.deepEqual(parseGatewayAliases(undefined, ['labby']), ['labby']);
+  assert.deepEqual(parseGatewayAliases('', ['labby']), ['labby']);
+});
+
+test('gateway alias lists preserve the given order and trim whitespace', () => {
+  assert.deepEqual(parseGatewayAliases(' omar, labby ', ['labby']), ['omar', 'labby']);
+});
+
+test('gateway alias lists accept both known aliases', () => {
+  assert.deepEqual(parseGatewayAliases('labby,omar', ['labby']), ['labby', 'omar']);
+});
+
+test('gateway alias lists reject an unknown alias', () => {
+  assert.throws(() => parseGatewayAliases('labby,hash', ['labby']), /unknown gateway alias/);
+});
+
+test('gateway alias lists reject a duplicate alias', () => {
+  assert.throws(() => parseGatewayAliases('labby, omar, labby', ['labby']), /duplicate gateway alias/);
 });
