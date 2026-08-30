@@ -6,7 +6,7 @@ import { OpenClawStateSource, selectViewerSessionKeys } from '../daemon/sources/
 const sess = (key, active) => ({ key, displayName: key, hasActiveRun: active, archived: false, lastActivityAt: 1 });
 
 /** Fake GatewayClient: records requests, lets the test drive callbacks. */
-function fakeGateway({ sessions = [] } = {}) {
+function fakeGateway({ sessions = [], onRequest } = {}) {
   const state = { requests: [], requestParams: [], options: null, started: 0, stopped: 0, sessions };
   const create = (options) => {
     state.options = options;
@@ -16,6 +16,10 @@ function fakeGateway({ sessions = [] } = {}) {
       request(method, params) {
         state.requests.push(method);
         state.requestParams.push({ method, params });
+        if (onRequest) {
+          const handled = onRequest(method, params, state);
+          if (handled !== undefined) return handled;
+        }
         if (method === 'sessions.list') return Promise.resolve({ sessions: state.sessions, count: state.sessions.length });
         if (method === 'sessions.viewers.set' && params.sessionKeys.length > SESSION_VIEWER_PRESENCE_MAX_KEYS) {
           return Promise.reject(new Error('Too many session keys'));
@@ -214,6 +218,54 @@ test('a real event before the trailing timer replaces it instead of double-snaps
   assert.equal(seen.length, 3, 'only the replacement trailing timer should fire');
   await timers.tick(2000);
   assert.equal(seen.length, 3, 'no canceled trailing timer should still fire later');
+  source.stop();
+});
+
+test('re-runs a coalesced refresh after an in-flight snapshot resolves, so a started run is not lost', async () => {
+  let resolveList;
+  const gw = fakeGateway({
+    sessions: [sess('a', false)],
+    onRequest(method, params, state) {
+      if (method !== 'sessions.list') return undefined;
+      return new Promise((resolve) => {
+        resolveList = (sessions = state.sessions) => resolve({ sessions, count: sessions.length });
+      });
+    },
+  });
+  const timers = fakeTimers();
+  const source = makeSource(gw, {
+    debounceMs: 150,
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+  });
+  const seen = [];
+  source.on('agents', (a) => seen.push(a));
+
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+  assert.equal(gw.state.requests.filter((m) => m === 'sessions.list').length, 1, 'the first snapshot should be in flight');
+
+  gw.state.sessions = [sess('a', true)];
+  gw.state.options.onEvent({ event: 'sessions.changed', payload: {} });
+  await timers.tick(150);
+
+  assert.equal(gw.state.requests.filter((m) => m === 'sessions.list').length, 1,
+    'the debounced refresh should coalesce behind the in-flight snapshot');
+
+  resolveList([sess('a', false)]);
+  await Promise.resolve();
+  await Promise.resolve();
+  await settle();
+
+  assert.equal(gw.state.requests.filter((m) => m === 'sessions.list').length, 2,
+    'the owed refresh should re-run once the stale snapshot finishes');
+  assert.equal(seen[0][0].state, 'idle', 'the first snapshot still reflects the old session set');
+
+  resolveList([sess('a', true)]);
+  await settle();
+
+  assert.equal(seen.at(-1)[0].state, 'thinking', 'the second snapshot should emit the started run');
   source.stop();
 });
 

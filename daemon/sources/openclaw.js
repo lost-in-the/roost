@@ -124,6 +124,7 @@ export class OpenClawStateSource extends StateSource {
     this.trailingTimer = null;
     this.reconcileTimer = null;
     this.inFlight = false;
+    this.pendingSnapshot = false;
     /** sessionKey -> latest session.observer digest. Push-only: it cannot be
      *  re-read from sessions.list, so it has to be held here. Pruned to the
      *  live session set on every snapshot so it cannot grow without bound. */
@@ -178,35 +179,47 @@ export class OpenClawStateSource extends StateSource {
   }
 
   async snapshot() {
-    if (this.stopped || this.inFlight) return;
+    if (this.stopped) return;
+    if (this.inFlight) {
+      this.pendingSnapshot = true;
+      return;
+    }
     this.inFlight = true;
     try {
-      const res = await this.client.request('sessions.list', {});
-      if (this.stopped) return;
-      const sessions = res?.sessions ?? [];
-
-      // Drop digests for sessions the gateway no longer lists.
-      const live = new Set(sessions.map((s) => s?.key));
-      for (const key of this.digests.keys()) if (!live.has(key)) this.digests.delete(key);
-
-      // Join the per-session observer audience. `sessions.observer.visibility`
-      // is a global opt-in; the broadcast targets
-      // audience.recipients(sessionKey, agentId), so the gateway also has to be
-      // told WHICH sessions this connection is viewing. Declaring only the
-      // global flag produced silence across a real run.
-      const keys = selectViewerSessionKeys(sessions, this.digests);
-      try { await this.client.request('sessions.viewers.set', { sessionKeys: keys }); }
-      catch (err) { this.emit('warning', `openclaw viewers.set: ${err?.message ?? err}`); }
-
-      const agents = mapSessionsToAgents(sessions, this.digests, this.previous);
-      this.previous = new Map(agents.map((a) => [a.id, { state: a.state, since: a.since }]));
-      this.emit('agents', agents);
-      this.afterSnapshot(agents);
+      do {
+        this.pendingSnapshot = false;
+        await this.runSnapshotOnce();
+      } while (!this.stopped && this.pendingSnapshot);
     } catch (err) {
       this.emit('warning', `openclaw sessions.list: ${err?.message ?? err}`);
     } finally {
       this.inFlight = false;
+      this.pendingSnapshot = false;
     }
+  }
+
+  async runSnapshotOnce() {
+    const res = await this.client.request('sessions.list', {});
+    if (this.stopped) return;
+    const sessions = res?.sessions ?? [];
+
+    // Drop digests for sessions the gateway no longer lists.
+    const live = new Set(sessions.map((s) => s?.key));
+    for (const key of this.digests.keys()) if (!live.has(key)) this.digests.delete(key);
+
+    // Join the per-session observer audience. `sessions.observer.visibility`
+    // is a global opt-in; the broadcast targets
+    // audience.recipients(sessionKey, agentId), so the gateway also has to be
+    // told WHICH sessions this connection is viewing. Declaring only the
+    // global flag produced silence across a real run.
+    const keys = selectViewerSessionKeys(sessions, this.digests);
+    try { await this.client.request('sessions.viewers.set', { sessionKeys: keys }); }
+    catch (err) { this.emit('warning', `openclaw viewers.set: ${err?.message ?? err}`); }
+
+    const agents = mapSessionsToAgents(sessions, this.digests, this.previous);
+    this.previous = new Map(agents.map((a) => [a.id, { state: a.state, since: a.since }]));
+    this.emit('agents', agents);
+    this.afterSnapshot(agents);
   }
 
   afterSnapshot(agents) {
@@ -299,6 +312,7 @@ export class OpenClawStateSource extends StateSource {
     this.clearDebounceTimer();
     this.clearTrailingTimer();
     this.clearReconcileTimer();
+    this.pendingSnapshot = false;
     this.digests.clear();
     this.previous.clear();
     try { this.client?.stop(); } catch { /* stopping is best-effort */ }
