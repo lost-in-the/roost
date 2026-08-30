@@ -98,11 +98,12 @@ The plan already settled what to do about that, twice:
 ### The rule that falls out
 
 **If the decision cannot be safely made from a 64-character summary, it is not
-approvable on glass.** It becomes the "sent to your phone" handoff, which the
-plan treats as *designed behaviour, not a limitation*:
+approvable on glass.** It becomes a handoff: the panel can truthfully say it is
+not answerable there and direct the operator to OpenClaw, which the plan treats
+as *designed behaviour, not a limitation*:
 
-> Needs real review → Shows "sent to your phone," then returns to idle. The
-> handoff principle, made visible. Not a failure state.
+> Needs real review → Shows "not for the glass — check OpenClaw," then returns
+> to idle. The handoff principle, made visible. Not a failure state.
 
 **The daemon decides which it is**, at the same boundary where it truncates.
 Approving something you could not fully read is the exact failure this cap
@@ -280,7 +281,7 @@ did not specify:
 | Field | Why |
 |---|---|
 | `prompt.id` | Distinct from `primary_run_id`: one run can ask several questions in sequence. Answering needs to name the *question*, not the run. |
-| `prompt.kind` | Leaves room for later kinds without another contract change. M2 ships `approve_reject` only. |
+| `prompt.kind` | `approve_reject` draws buttons; `handoff` preserves a question that is not answerable on glass. A renderer must treat unknown kinds as no prompt. |
 | `prompt.reversible` | Drives one-tap vs second-confirm. Asserted by the daemon (§4.1). |
 | `prompt.expires_at` | The independent backstop from §4.3. |
 
@@ -513,9 +514,9 @@ decisions. They do not block the panel's first complete approval path.
 - [ ] Reconnecting replaces pending state from authoritative replay without resurrection
 - [ ] Blocking the broker for 35 seconds makes the buttons dead, not just stale-looking
 - [ ] A prompt past `expires_at` is dead with no new message required
-- [ ] A label that cannot be summarised in 64 characters becomes a phone handoff
-      — *daemon half done: it emits `kind: "handoff"`. Needs the renderer to show
-      it, and needs the wording decided (see the warning in §2).*
-      instead of an approvable prompt
+- [ ] A label that cannot be summarised in 64 characters becomes a non-approvable
+      handoff instead of an approvable prompt — *daemon half done: it emits
+      `kind: "handoff"`. The renderer still needs its honest wording decided
+      (see the warning in §2).*
 - [ ] The Stream Deck still works, unchanged and unmodified
 - [ ] MQTT, logs, fixtures, and browser state contain no raw approval payloads
