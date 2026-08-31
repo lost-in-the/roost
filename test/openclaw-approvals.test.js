@@ -156,6 +156,14 @@ test('expiry kills an entry without a new message', () => {
   assert.equal(store.getPrompt('sess-1')?.id, 'appr-1');
   now = 1200;
   assert.equal(store.getPrompt('sess-1'), null);
+  assert.deepEqual(store.getResolved('appr-1'), {
+    status: 'expired',
+    decision: null,
+    resolvedAtMs: 1200,
+    correlation: store.getResolved('appr-1')?.correlation,
+  });
+  assert.equal(typeof store.getResolved('appr-1')?.correlation, 'string');
+  assert.ok((store.getResolved('appr-1')?.correlation?.length ?? 0) > 0);
 });
 
 test('remembering a terminal answer makes a second answer reject distinguishably', () => {

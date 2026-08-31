@@ -44,8 +44,11 @@ const json = (res, status, body) => {
   res.end(payload);
 };
 
-function jsonError(res, status, code, error) {
-  return json(res, status, { ok: false, code, error });
+function jsonError(res, status, code, error, extra = {}) {
+  const body = { ok: false, code, error };
+  if (typeof extra.status === 'string') body.status = extra.status;
+  if (typeof extra.decision === 'string') body.decision = extra.decision;
+  return json(res, status, body);
 }
 
 async function readJsonBody(req, { maxBytes = APPROVAL_BODY_LIMIT } = {}) {
@@ -174,7 +177,10 @@ export async function startHttpServer({ host, port, socketPath, laptopLog, rende
             }
           })();
         onLog(`approval failed code=${code}${correlation ? ` correlation=${correlation}` : ''}`);
-        return jsonError(res, mapped.status, code, mapped.error);
+        return jsonError(res, mapped.status, code, mapped.error, {
+          status: err?.status,
+          decision: err?.decision,
+        });
       }
     }
 

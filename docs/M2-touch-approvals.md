@@ -533,15 +533,31 @@ decisions. They do not block the panel's first complete approval path.
 - [ ] Native `/codex bind` approvals remain absent and the Codex classes of the
       2026-08-27 spike remain documented unsupported, per D-016
 - [ ] A destructive prompt requires a deliberate second confirm
-- [ ] Answering the same prompt twice is rejected by the daemon, not the browser
+- [x] Answering the same prompt twice is rejected by the daemon, not the browser
 - [ ] Answering on the laptop makes the panel buttons disappear within 5 seconds
 - [ ] Another surface winning is shown from the canonical terminal record
-- [ ] Reconnecting replaces pending state from authoritative replay without resurrection
+- [x] Reconnecting replaces pending state from authoritative replay without resurrection
 - [ ] Blocking the broker for 35 seconds makes the buttons dead, not just stale-looking
-- [ ] A prompt past `expires_at` is dead with no new message required
+- [x] A prompt past `expires_at` is dead with no new message required
 - [ ] A label that cannot be summarised in 64 characters becomes a non-approvable
       handoff instead of an approvable prompt — *daemon half done: it emits
       `kind: "handoff"`. The renderer still needs its honest wording decided
       (see the warning in §2).*
 - [ ] The Stream Deck still works, unchanged and unmodified
-- [ ] MQTT, logs, fixtures, and browser state contain no raw approval payloads
+- [x] Published MQTT messages, exercised daemon log lines, and renderer view
+      state contain no raw approval payloads
+
+This offline proof is specific to approval payload handling. If
+`ROOST_OPENCLAW_DEBUG=1`, `daemon/sources/openclaw.js`
+dumps raw `session.observer` digest payloads to stderr so live digest shapes can
+be confirmed; those digests are a different payload class than approvals, and
+the debug gate means this checklist item is not an unconditional claim about
+everything the daemon can print.
+
+`test/approval-integration.test.js` exercises the real sources, coordinator,
+aggregation, published MQTT path, approval HTTP route, and renderer decision
+layer against a fake Gateway transport and an in-process broker. It proves that
+published state, exercised daemon log lines, and renderer view state stay free
+of raw approval payload strings offline, but it does not observe a real panel,
+two live Gateways, or on-device touch behavior. The unticked boxes still need
+the live two-Gateway run and the on-device pass in §7 step 6.

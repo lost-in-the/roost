@@ -86,6 +86,15 @@ function terminalRecord(approval) {
   };
 }
 
+export function expiredTerminalRecord(id, resolvedAtMs = Date.now()) {
+  return {
+    status: 'expired',
+    decision: null,
+    resolvedAtMs,
+    correlation: safeApprovalSummary({ id }).correlation,
+  };
+}
+
 function choosePrompt(entries) {
   return entries
     .slice()
@@ -122,7 +131,10 @@ export class PendingApprovalStore {
     const now = this.now();
     for (const entries of this.pendingBySession.values()) {
       for (const [id, approval] of entries) {
-        if (approval.expiresAtMs !== null && approval.expiresAtMs <= now) entries.delete(id);
+        if (approval.expiresAtMs !== null && approval.expiresAtMs <= now) {
+          this.rememberResolved(id, expiredTerminalRecord(id, now));
+          entries.delete(id);
+        }
       }
     }
     for (const [sessionKey, entries] of this.pendingBySession) {

@@ -1,48 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { request } from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { startHttpServer } from '../daemon/http.js';
-import { LaptopLog } from '../daemon/laptop-log.js';
-
-async function withServer(fn, options = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'roost-http-'));
-  const socketPath = join(dir, 'roost.sock');
-  const log = new LaptopLog({ path: join(dir, 'laptop-opens.log') });
-  const server = await startHttpServer({
-    host: '127.0.0.1',
-    port: 0,
-    socketPath,
-    laptopLog: log,
-    rendererConfig: { wsUrl: 'ws://broker.example:8083/mqtt', topic: 'roost/agents/state', staleMs: 30_000, username: 'panel', password: 'pw' },
-    ...options,
-  });
-  const fetchJson = async (path, init = {}) => {
-    const res = await requestOverSocket({ socketPath: server.socketPath, path, ...init });
-    return { ...res, json: JSON.parse(res.body) };
-  };
-  try { await fn({ fetch: (path, init) => requestOverSocket({ socketPath: server.socketPath, path, ...init }), fetchJson, log, server }); }
-  finally { await server.close(); rmSync(dir, { recursive: true, force: true }); }
-}
-
-function requestOverSocket({ socketPath, path, method = 'GET', headers = {}, body }) {
-  return new Promise((resolve, reject) => {
-    const req = request({ socketPath, path, method, headers }, (res) => {
-      const chunks = [];
-      res.on('data', (chunk) => chunks.push(chunk));
-      res.on('end', () => resolve({
-        status: res.statusCode,
-        headers: res.headers,
-        body: Buffer.concat(chunks).toString('utf8'),
-      }));
-    });
-    req.on('error', reject);
-    if (body !== undefined) req.write(body);
-    req.end();
-  });
-}
+import { withServer } from './helpers/http.js';
 
 test('the renderer page is served over http so the browser can open a websocket', async () => {
   await withServer(async ({ fetch }) => {
@@ -288,6 +246,73 @@ test('approval route maps stable source error codes without exposing raw present
     onLog: (line) => logs.push(line),
   });
   assert.equal(logs.some((line) => /Approve short change\?|detail|command/i.test(line)), false);
+});
+
+test('approval route includes canonical terminal fields only when the source error carries them', async () => {
+  await withServer(async ({ fetchJson }) => {
+    const answered = await fetchJson('/api/approval', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'labby:appr-1', decision: 'deny' }),
+    });
+    assert.equal(answered.status, 409);
+    assert.deepEqual(answered.json, {
+      ok: false,
+      code: 'already_answered',
+      error: 'approval already answered',
+      status: 'denied',
+      decision: 'deny',
+    });
+
+    const expired = await fetchJson('/api/approval', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'labby:appr-2', decision: 'deny' }),
+    });
+    assert.equal(expired.status, 409);
+    assert.deepEqual(expired.json, {
+      ok: false,
+      code: 'expired',
+      error: 'approval expired',
+      status: 'expired',
+    });
+
+    const unknown = await fetchJson('/api/approval', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'labby:appr-3', decision: 'deny' }),
+    });
+    assert.equal(unknown.status, 404);
+    assert.deepEqual(unknown.json, {
+      ok: false,
+      code: 'unknown_prompt',
+      error: 'approval prompt not found',
+    });
+  }, {
+    resolveApproval: (() => {
+      let index = 0;
+      return async () => {
+        index += 1;
+        if (index === 1) {
+          const err = new Error('already answered');
+          err.code = 'already_answered';
+          err.status = 'denied';
+          err.decision = 'deny';
+          throw err;
+        }
+        if (index === 2) {
+          const err = new Error('expired');
+          err.code = 'expired';
+          err.status = 'expired';
+          err.decision = null;
+          throw err;
+        }
+        const err = new Error('unknown');
+        err.code = 'unknown_prompt';
+        throw err;
+      };
+    })(),
+  });
 });
 
 test('approval route defaults unexpected failures to transport_uncertain', async () => {

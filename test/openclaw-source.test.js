@@ -2,36 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SESSION_VIEWER_PRESENCE_MAX_KEYS } from '@openclaw/gateway-protocol/schema';
 import { OpenClawStateSource, selectViewerSessionKeys } from '../daemon/sources/openclaw.js';
+import { fakeGateway, settle } from './helpers/openclaw-gateway.js';
 
 const sess = (key, active) => ({ key, displayName: key, hasActiveRun: active, archived: false, lastActivityAt: 1 });
-
-/** Fake GatewayClient: records requests, lets the test drive callbacks. */
-function fakeGateway({ sessions = [], onRequest } = {}) {
-  const state = { requests: [], requestParams: [], options: null, started: 0, stopped: 0, sessions };
-  const create = (options) => {
-    state.options = options;
-    return {
-      start() { state.started += 1; },
-      stop() { state.stopped += 1; },
-      request(method, params) {
-        state.requests.push(method);
-        state.requestParams.push({ method, params });
-        if (onRequest) {
-          const handled = onRequest(method, params, state);
-          if (handled !== undefined) return handled;
-        }
-        if (method === 'sessions.list') return Promise.resolve({ sessions: state.sessions, count: state.sessions.length });
-        if (method === 'sessions.viewers.set' && params.sessionKeys.length > SESSION_VIEWER_PRESENCE_MAX_KEYS) {
-          return Promise.reject(new Error('Too many session keys'));
-        }
-        return Promise.resolve({});
-      },
-    };
-  };
-  return { create, state };
-}
-
-const settle = () => new Promise((r) => setTimeout(r, 10));
 
 function fakeTimers() {
   let now = 0;
@@ -653,6 +626,58 @@ test('another surface winning surfaces already_answered and records the canonica
   );
   assert.equal(source.approvals.getResolved('appr-1').decision, 'deny');
   source.stop();
+});
+
+test('an expired prompt remains distinguishable after local expiry removes it from pending storage', async () => {
+  let now = 1000;
+  const realNow = Date.now;
+  Date.now = () => now;
+  try {
+    const gw = fakeGateway({
+      sessions: [sess('a', true)],
+      onRequest(method) {
+        if (method !== 'sessions.messages.subscribe') return undefined;
+        return Promise.resolve({
+          approvalReplay: {
+            approvals: [{
+              id: 'appr-1',
+              status: 'pending',
+              expiresAtMs: 1200,
+              presentation: {
+                kind: 'plugin',
+                allowedDecisions: ['allow-once', 'deny'],
+                title: 'Approve short change?',
+                metadata: { reversible: true },
+              },
+            }],
+            truncated: false,
+          },
+        });
+      },
+    });
+    const source = makeSource(gw, { now: () => now });
+    source.start();
+    gw.state.options.onHelloOk({ auth: {} });
+    await settle();
+    source.setConnectionState('connected');
+
+    now = 1200;
+    await assert.rejects(
+      () => source.resolveApproval({ id: 'appr-1', decision: 'deny' }),
+      (err) => err?.code === 'expired' && err?.status === 'expired' && err?.decision === null,
+    );
+    assert.deepEqual(source.approvals.getResolved('appr-1'), {
+      status: 'expired',
+      decision: null,
+      resolvedAtMs: 1200,
+      correlation: source.approvals.getResolved('appr-1')?.correlation,
+    });
+    assert.equal(typeof source.approvals.getResolved('appr-1')?.correlation, 'string');
+    assert.ok((source.approvals.getResolved('appr-1')?.correlation?.length ?? 0) > 0);
+    source.stop();
+  } finally {
+    Date.now = realNow;
+  }
 });
 
 test('malformed gateway success freezes the prompt and fails closed without a retry', async () => {

@@ -5,6 +5,7 @@ import { deviceSigningDeps } from '../openclaw/ed25519.js';
 import { mapSessionsToAgents } from '../openclaw/map-sessions.js';
 import {
   PendingApprovalStore,
+  expiredTerminalRecord,
   projectApproval,
   SAFE_DECISIONS,
   isTerminalApprovalStatus,
@@ -387,7 +388,21 @@ export class OpenClawStateSource extends StateSource {
   async resolveApprovalOnce({ id, decision }) {
     const found = this.approvals.findPending(id);
     if (!found) {
-      if (this.approvals.getResolved(id)) throw codedError('already_answered', 'approval already answered');
+      const resolved = this.approvals.getResolved(id);
+      if (resolved?.status === 'expired') {
+        throw codedError('expired', 'approval already expired', {
+          status: resolved.status,
+          decision: resolved.decision,
+          correlation: resolved.correlation,
+        });
+      }
+      if (resolved) {
+        throw codedError('already_answered', 'approval already answered', {
+          status: resolved.status,
+          decision: resolved.decision,
+          correlation: resolved.correlation,
+        });
+      }
       throw codedError('unknown_prompt', `unknown approval ${JSON.stringify(id)}`);
     }
     const { sessionKey, entries, approval } = found;
@@ -396,8 +411,14 @@ export class OpenClawStateSource extends StateSource {
     }
     if (!approval.actionable) throw codedError('not_actionable', 'approval is not actionable');
     if (approval.expiresAtMs !== null && approval.expiresAtMs <= this.approvals.now()) {
+      this.approvals.rememberResolved(id, expiredTerminalRecord(id, this.approvals.now()));
       entries.delete(id);
-      throw codedError('expired', 'approval already expired');
+      const resolved = this.approvals.getResolved(id);
+      throw codedError('expired', 'approval already expired', {
+        status: resolved?.status,
+        decision: resolved?.decision,
+        correlation: resolved?.correlation,
+      });
     }
     try {
       const result = await this.client.request('approval.resolve', { id, kind: approval.gatewayKind, decision });
