@@ -57,7 +57,15 @@ function makeToolsDir(home) {
   return tools;
 }
 
-function writeOpStub(bin, marker, { interruptOnTemp = false, grepMode = null } = {}) {
+function writeOpStub(bin, marker, {
+  interruptOnTemp = false,
+  interruptOnRename = false,
+  interruptSignal = 'TERM',
+  interruptDuringCleanup = false,
+  cleanupInterruptSignal = 'INT',
+  cleanupInterruptTarget = 'ppid',
+  grepMode = null,
+} = {}) {
   fs.mkdirSync(bin, { recursive: true });
   const stub = path.join(bin, 'op');
   fs.writeFileSync(stub, [
@@ -126,7 +134,7 @@ function writeOpStub(bin, marker, { interruptOnTemp = false, grepMode = null } =
       '    if [ ! -e "$ROOST_CHMOD_MARKER" ]; then',
       '      printf touched > "$ROOST_CHMOD_MARKER"',
       '      "$ROOST_REAL_CHMOD" "$@"',
-      '      kill -TERM "$PPID"',
+      `      kill -${interruptSignal} "$PPID"`,
       '      exit 143',
       '    fi',
       '    ;;',
@@ -135,6 +143,34 @@ function writeOpStub(bin, marker, { interruptOnTemp = false, grepMode = null } =
       '',
     ].join('\n'));
     fs.chmodSync(chmod, 0o755);
+  }
+
+  if (interruptOnRename) {
+    const mv = path.join(bin, 'mv');
+    fs.writeFileSync(mv, [
+      '#!/usr/bin/env bash',
+      '"$ROOST_REAL_MV" "$@"',
+      `kill -${interruptSignal} "$PPID"`,
+      '',
+    ].join('\n'));
+    fs.chmodSync(mv, 0o755);
+  }
+
+  if (interruptDuringCleanup) {
+    const rm = path.join(bin, 'rm');
+    fs.rmSync(rm, { force: true });
+    const target = cleanupInterruptTarget === 'process-group' ? '0' : '"$PPID"';
+    fs.writeFileSync(rm, [
+      '#!/usr/bin/env bash',
+      'printf "%s\\n" "$*" >> "$ROOST_RM_LOG"',
+      'if [ ! -e "$ROOST_RM_MARKER" ]; then',
+      '  printf touched > "$ROOST_RM_MARKER"',
+      `  kill -${cleanupInterruptSignal} ${target}`,
+      'fi',
+      'exec "$ROOST_REAL_RM" "$@"',
+      '',
+    ].join('\n'));
+    fs.chmodSync(rm, 0o755);
   }
 
   if (grepMode) {
@@ -186,6 +222,11 @@ function runProvision({
   existing = SENTINEL,
   existingMode = 0o600,
   interruptOnTemp = false,
+  interruptOnRename = false,
+  interruptSignal = 'TERM',
+  interruptDuringCleanup = false,
+  cleanupInterruptSignal = 'INT',
+  cleanupInterruptTarget = 'ppid',
   grepMode = null,
 } = {}) {
   const { home, cache, cleanup } = makeHome(existing, existingMode);
@@ -194,12 +235,25 @@ function runProvision({
   const marker = path.join(home, 'op.marker');
   const bytesDir = path.join(home, 'op-bytes');
   const chmodMarker = path.join(home, 'chmod.marker');
+  const rmMarker = path.join(home, 'rm.marker');
+  const rmLog = path.join(home, 'rm.log');
   const grepLog = path.join(home, 'grep.log');
   fs.mkdirSync(bytesDir, { recursive: true });
-  writeOpStub(bin, marker, { interruptOnTemp, grepMode });
+  writeOpStub(bin, marker, {
+    interruptOnTemp,
+    interruptOnRename,
+    interruptSignal,
+    interruptDuringCleanup,
+    cleanupInterruptSignal,
+    cleanupInterruptTarget,
+    grepMode,
+  });
   const beforeHash = sha256(cache);
   const beforeMode = mode(cache);
-  const result = spawnSync('bash', [SCRIPT], {
+  const beforeBytes = fs.existsSync(cache) ? fs.readFileSync(cache) : null;
+  const command = cleanupInterruptTarget === 'process-group' ? '/usr/bin/setsid' : 'bash';
+  const args = cleanupInterruptTarget === 'process-group' ? ['-w', 'bash', SCRIPT] : [SCRIPT];
+  const result = spawnSync(command, args, {
     encoding: 'utf8',
     env: {
       HOME: home,
@@ -207,10 +261,14 @@ function runProvision({
       ROOST_OP_MARKER: marker,
       ROOST_OP_BYTES_DIR: bytesDir,
       ROOST_CHMOD_MARKER: chmodMarker,
+      ROOST_RM_MARKER: rmMarker,
+      ROOST_RM_LOG: rmLog,
       ROOST_OP_SCENARIO: scenario,
       ROOST_DAEMON_VALUE: daemonValue,
       ROOST_PANEL_VALUE: panelValue,
       ROOST_REAL_CHMOD: '/usr/bin/chmod',
+      ROOST_REAL_MV: path.join(tools, 'mv'),
+      ROOST_REAL_RM: path.join(tools, 'rm'),
       ROOST_REAL_GREP: path.join(tools, 'grep'),
       ROOST_GREP_LOG: grepLog,
       ROOST_GREP_FAIL_ON: grepMode?.replace('panel-', '').replace('-error', '') ?? '',
@@ -224,9 +282,12 @@ function runProvision({
     marker,
     bytesDir,
     chmodMarker,
+    rmMarker,
+    rmLog,
     grepLog,
     beforeHash,
     beforeMode,
+    beforeBytes,
     afterHash: sha256(cache),
     afterMode: mode(cache),
     cacheText: fs.existsSync(cache) ? fs.readFileSync(cache, 'utf8') : null,
@@ -553,7 +614,8 @@ test('a successful run repairs an existing over-permissive cache', () => {
 
 test('an interruption after the temp file exists still cleans up and preserves the cache', () => {
   withProvision({ interruptOnTemp: true }, (run) => {
-    assert.notEqual(run.status, 0);
+    assert.equal(run.signal, 'SIGTERM');
+    assert.equal(run.status, null);
     assert.equal(run.afterHash, run.beforeHash);
     assert.equal(run.afterMode, run.beforeMode);
     assert.deepEqual(run.temps, []);
@@ -562,6 +624,114 @@ test('an interruption after the temp file exists still cleans up and preserves t
     assertNoSecretOutput(run);
   });
 });
+
+test('an INT after the temp file exists re-raises SIGINT after cleanup', () => {
+  withProvision({ interruptOnTemp: true, interruptSignal: 'INT' }, (run) => {
+    assert.equal(run.signal, 'SIGINT');
+    assert.equal(run.status, null);
+    assert.equal(run.afterHash, run.beforeHash);
+    assert.equal(run.afterMode, run.beforeMode);
+    assert.deepEqual(run.temps, []);
+    assert.equal(fs.readFileSync(run.marker, 'utf8'), 'touched');
+    assert.equal(fs.readFileSync(run.chmodMarker, 'utf8'), 'touched');
+    assertNoSecretOutput(run);
+  });
+});
+
+test('a HUP after the temp file exists re-raises SIGHUP after cleanup', () => {
+  withProvision({ interruptOnTemp: true, interruptSignal: 'HUP' }, (run) => {
+    assert.equal(run.signal, 'SIGHUP');
+    assert.equal(run.status, null);
+    assert.equal(run.afterHash, run.beforeHash);
+    assert.equal(run.afterMode, run.beforeMode);
+    assert.deepEqual(run.temps, []);
+    assert.equal(fs.readFileSync(run.marker, 'utf8'), 'touched');
+    assert.equal(fs.readFileSync(run.chmodMarker, 'utf8'), 'touched');
+    assertNoSecretOutput(run);
+  });
+});
+
+test('a TERM during rename still commits the completed cache and exits cleanly', () => {
+  withProvision({ interruptOnRename: true }, (run) => {
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.signal, null);
+    assert.equal(run.cacheText, "ROOST_MQTT_PASSWORD='daemon-secret-value'\nROOST_MQTT_RENDERER_PASSWORD='panel-secret-value'\n");
+    assert.equal(run.afterMode, 0o600);
+    assert.deepEqual(run.temps, []);
+    assertNoSecretOutput(run);
+  });
+});
+
+test('an INT during rename still commits the completed cache and exits cleanly', () => {
+  withProvision({ interruptOnRename: true, interruptSignal: 'INT' }, (run) => {
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.signal, null);
+    assert.equal(run.cacheText, "ROOST_MQTT_PASSWORD='daemon-secret-value'\nROOST_MQTT_RENDERER_PASSWORD='panel-secret-value'\n");
+    assert.equal(run.afterMode, 0o600);
+    assert.deepEqual(run.temps, []);
+    assertNoSecretOutput(run);
+  });
+});
+
+test('a HUP during rename still commits the completed cache and exits cleanly', () => {
+  withProvision({ interruptOnRename: true, interruptSignal: 'HUP' }, (run) => {
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.signal, null);
+    assert.equal(run.cacheText, "ROOST_MQTT_PASSWORD='daemon-secret-value'\nROOST_MQTT_RENDERER_PASSWORD='panel-secret-value'\n");
+    assert.equal(run.afterMode, 0o600);
+    assert.deepEqual(run.temps, []);
+    assertNoSecretOutput(run);
+  });
+});
+
+test('cleanup ignores signals before disarming traps and re-raising the original signal', () => {
+  withProvision({ interruptOnTemp: true, interruptDuringCleanup: true }, (run) => {
+    assert.equal(run.signal, 'SIGTERM');
+    assert.equal(run.status, null);
+    assert.equal(fs.readFileSync(run.rmLog, 'utf8').trim().split('\n').length, 1);
+    assert.equal(fs.readFileSync(run.rmMarker, 'utf8'), 'touched');
+    assert.equal(run.afterHash, run.beforeHash);
+    assert.equal(run.afterMode, run.beforeMode);
+    assert.deepEqual(run.temps, []);
+    assertNoSecretOutput(run);
+  });
+});
+
+test('cleanup preserves the original TERM when a second HUP targets the parent shell', () => {
+  withProvision({
+    interruptOnTemp: true,
+    interruptDuringCleanup: true,
+    cleanupInterruptSignal: 'HUP',
+  }, (run) => {
+    assert.equal(run.signal, 'SIGTERM');
+    assert.equal(run.status, null);
+    assert.equal(fs.readFileSync(run.rmLog, 'utf8').trim().split('\n').length, 1);
+    assert.equal(fs.readFileSync(run.rmMarker, 'utf8'), 'touched');
+    assert.equal(run.afterHash, run.beforeHash);
+    assert.equal(run.afterMode, run.beforeMode);
+    assert.deepEqual(run.temps, []);
+    assertNoSecretOutput(run);
+  });
+});
+
+for (const cleanupInterruptSignal of ['HUP', 'INT', 'TERM']) {
+  test(`cleanup removes temp files when a second ${cleanupInterruptSignal} targets the process group`, () => {
+    withProvision({
+      interruptOnTemp: true,
+      interruptDuringCleanup: true,
+      cleanupInterruptSignal,
+      cleanupInterruptTarget: 'process-group',
+    }, (run) => {
+      assert.equal(run.signal, 'SIGTERM');
+      assert.equal(run.status, null);
+      assert.deepEqual(run.cacheBytes, run.beforeBytes);
+      assert.equal(run.afterMode, run.beforeMode);
+      assert.equal(fs.readFileSync(run.rmMarker, 'utf8'), 'touched');
+      assert.deepEqual(run.temps, []);
+      assertNoSecretOutput(run);
+    });
+  });
+}
 
 test('sentinel credentials survive empty, failed, and multiline reads byte-for-byte', () => {
   for (const scenario of ['empty', 'second-empty', 'fail', 'lf', 'cr']) {
