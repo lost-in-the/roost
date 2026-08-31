@@ -2,6 +2,7 @@ import mqtt from '/vendor/mqtt.esm.js';
 import { isStale, silentFor } from '/staleness.js';
 import { routeTopic, countsAsLiveness } from '/topics.js';
 import { mount as mountCounter, flushQueue, resolveVariant } from '/components/laptop-counter.js';
+import { mount as mountApprovals } from '/components/approval-controls.js';
 
 /**
  * The panel.
@@ -27,6 +28,7 @@ const nodes = {
   clock: el('clock'),
   toast: el('toast'),
   staleSub: el('stale-sub'),
+  approvalSlot: el('approval-slot'),
 };
 
 const STATE_WORDS = {
@@ -124,6 +126,7 @@ function tickStaleness() {
 // the count arrives over MQTT, a tap goes out over loopback HTTP.
 
 let counter = null;
+let approvals = null;
 
 function toast(message) {
   nodes.toast.textContent = message;
@@ -151,6 +154,21 @@ function mountInstrument(variant) {
   document.documentElement.dataset.instrument = variant;
 }
 
+function mountApprovalControls() {
+  approvals = mountApprovals(nodes.approvalSlot, {
+    getSnapshot: () => {
+      const now = Date.now();
+      return {
+        prompt: last?.prompt ?? null,
+        label: last?.label ?? '',
+        state: root.dataset.state || 'boot',
+        stale: config ? isStale({ now, lastMessageAt, startedAt, staleMs: config.staleMs }) : false,
+      };
+    },
+    onToast: toast,
+  });
+}
+
 async function drainQueue() {
   const { flushed } = await flushQueue(recordLaptopOpen);
   if (flushed > 0) toast(`synced ${flushed} queued`);
@@ -168,6 +186,7 @@ async function connect() {
   // layouts can be compared on the real panel without restarting anything.
   const requested = new URLSearchParams(location.search).get('instrument');
   mountInstrument(resolveVariant(requested || config.instrumentVariant));
+  mountApprovalControls();
   drainQueue();
 
   const client = mqtt.connect(config.wsUrl, {
@@ -214,9 +233,11 @@ async function connect() {
     // explicitly as "offline as of now" rather than defaulting the field.
     if (payload.state === 'offline' && payload.ts === undefined) {
       render({ ...payload, label: 'state daemon is not running', count: 0, since: null });
+      approvals?.refresh();
       return;
     }
     render(payload);
+    approvals?.refresh();
   });
 }
 
@@ -224,6 +245,7 @@ setInterval(tickElapsed, 1000);
 setInterval(tickClock, 10_000);
 setInterval(tickStaleness, 1000);
 setInterval(drainQueue, 15_000);
+setInterval(() => approvals?.refresh(), 1000);
 
 tickClock();
 connect().catch((err) => {
@@ -234,4 +256,6 @@ connect().catch((err) => {
   // The daemon is unreachable, so mount the default variant anyway: the queue
   // still works and the taps are what matter most when things are broken.
   if (!counter) mountInstrument('corner');
+  if (!approvals) mountApprovalControls();
+  approvals.refresh();
 });
