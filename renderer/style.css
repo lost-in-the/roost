@@ -178,6 +178,71 @@ html[data-stale="yes"] .glyph::after {
 }
 .label:empty { display: none; }
 
+/* ---- approvals --------------------------------------------------------- */
+
+.approval-slot { min-height: 0; }
+
+.approval-controls {
+  display: grid;
+  gap: 14px;
+  align-self: start;
+  max-width: 78%;
+}
+
+.approval-line {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.25;
+  color: var(--ink-dim);
+}
+
+.approval-buttons {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.approval-button {
+  min-width: 240px;
+  min-height: 96px;
+  padding: 18px 28px;
+  border-radius: 24px;
+  border: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent-2) 76%, black);
+  color: var(--ink);
+  font: inherit;
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  transition: transform 120ms ease, opacity 220ms ease, background 220ms ease, border-color 220ms ease;
+  cursor: none;
+}
+
+.approval-button:active {
+  transform: scale(0.97);
+}
+
+.approval-button[disabled],
+html[data-stale="yes"] .approval-button {
+  opacity: 0.38;
+  transform: none;
+  pointer-events: none;
+}
+
+.approval-button[data-armed="yes"] {
+  background: color-mix(in srgb, var(--accent) 26%, var(--accent-2));
+}
+
+.approval-deny {
+  border-color: #ff6a74;
+  color: #ffe0e4;
+}
+
+.approval-allow-once {
+  border-color: #57dca7;
+  color: #e5fff5;
+}
+
 /* ---- activity strip ---------------------------------------------------- */
 
 .activity {
@@ -264,6 +329,7 @@ html[data-stale="yes"] .stale { display: flex; }
 html[data-stale="yes"] .activity-fill,
 html[data-stale="yes"] .glyph::after,
 html[data-stale="yes"] #panel { animation: none !important; }
+html[data-stale="yes"] .approval-controls { opacity: 0.65; }
 
 /* ---- laptop button ------------------------------------------------------ */
 
