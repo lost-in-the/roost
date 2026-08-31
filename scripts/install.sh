@@ -32,7 +32,7 @@ if [ ${#missing[@]} -gt 0 ]; then
   echo "On Arch/Omarchy:  sudo pacman -S --needed nodejs npm jq chromium" >&2
   exit 1
 fi
-command -v op >/dev/null || warn "1Password CLI (op) not found — needed by the systemd unit to resolve secrets"
+command -v op >/dev/null || warn "1Password CLI (op) not found — needed to provision ~/.config/roost/credentials.env from the Homelab vault"
 echo "   node $(node --version), $(chromium --version 2>/dev/null || echo chromium)"
 
 say "Installing node dependencies"
@@ -43,7 +43,7 @@ run "cd '${REPO_DIR}' && npm install --omit=dev"
 if [ ! -f "${REPO_DIR}/.env" ]; then
   say "Creating .env from .env.example"
   run "cp '${REPO_DIR}/.env.example' '${REPO_DIR}/.env'"
-  warn "Edit ${REPO_DIR}/.env — set ROOST_MQTT_HOST and the op:// secret references"
+  warn "Edit ${REPO_DIR}/.env — set literal non-secret settings: ROOST_MQTT_HOST, ROOST_MQTT_WS_URL, local HTTP bind, state source, and gateway overrides"
 else
   say ".env already exists, leaving it alone"
 fi
@@ -87,12 +87,18 @@ cat <<DONE
 
 Installed. Remaining steps:
 
-  1. Edit .env             ROOST_MQTT_HOST plus the op:// references
+  1. Edit .env             literal non-secret settings: ROOST_MQTT_HOST,
+                           ROOST_MQTT_WS_URL, local HTTP bind, state source,
+                           and gateway overrides
   2. Plug the panel in, then:
                            ./scripts/derive-monitor.sh
                            cp config/hypr/roost-monitor.lua ${HYPR_DIR}/
   3. Apply Hyprland config hyprctl reload && hyprctl configerrors
-  4. Start it              systemctl --user enable --now roost-daemon roost-panel
+DONE
+
+cat <<'DONE'
+  4. Provision credentials ./scripts/provision-credentials.sh
+  5. Start it              systemctl --user enable --now roost-daemon roost-panel
 
 To try it without a broker or the panel hardware:
 
