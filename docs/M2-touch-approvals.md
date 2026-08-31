@@ -3,7 +3,7 @@
 **Status:** protocol spike completed 2026-08-27; Claude-native approvals passed
 on both Gateways, and the operator took the scope decision on 2026-08-30 to
 narrow M2 to that supported class. [`DECISIONS.md`](DECISIONS.md)
-D-016 records the boundary. The build sequence now runs through §7 step 4.
+D-016 records the boundary. The build sequence now runs through §7 step 5.
 Written 2026-08-21, immediately after M1 shipped, while the reasoning was
 fresh. The 2026-08-23 hardware blocker is resolved. Homelab backlog 128 calls
 this work M3; this repository retains the original Roost milestone name, M2.
@@ -37,11 +37,19 @@ Built so far, in the order §7 required:
   facts at submit time so a stale or offline panel cannot answer (§4.4), and
   reports unreadable or non-terminal daemon replies as unknown rather than as
   applied.
+- **The offline integration suite and two route fixes** (2026-08-31). §7 step
+  5, in `test/approval-integration.test.js` plus `daemon/http.js`. It covers
+  both gateways independently and simultaneously, collision and double-answer
+  cases, stale/expiry, resolution elsewhere, ambiguous transport failure, and
+  payload absence from published MQTT, exercised daemon log lines, and renderer
+  view state. It also uncovered two route defects fixed with it: expiry was not
+  enforced at the HTTP route, and `jsonError()` dropped the canonical terminal
+  record from the error path.
 
-Not built yet: integration testing (§7 step 5) and deploy (§7 step 6). The
-panel now draws controls, but it has not yet been tested live against two
-gateways and has not been deployed; the config flip and pairing/scope change in
-step 6 still need separate operator approval.
+Not built yet: deploy (§7 step 6). Integration testing is done offline, but the
+panel has still not been tested live against two gateways and has not been
+deployed; the config flip and pairing/scope change in step 6 still need
+separate operator approval.
 
 **Goal:** answer an agent's approve/reject prompt from the panel, without
 opening a laptop. That is the second half of the project's success metric —

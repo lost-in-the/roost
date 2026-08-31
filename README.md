@@ -99,7 +99,8 @@ It checks dependencies, installs npm packages, symlinks the Hyprland config and
 systemd units, and creates `.env` from the example. Then:
 
 ```sh
-$EDITOR .env                                     # broker host + op:// references
+$EDITOR .env                                     # non-secret settings only
+./scripts/provision-credentials.sh               # writes ~/.config/roost/credentials.env
 systemctl --user enable --now roost-daemon roost-panel
 ```
 
@@ -112,15 +113,15 @@ systemctl --user stop roost-panel roost-daemon
 ### Secrets
 
 The daemon reads plain environment variables and knows nothing about 1Password.
-The systemd unit runs it under `op run --env-file`, so `.env` holds `op://`
-**references** and never a credential. `.env` is gitignored;
-[`.env.example`](.env.example) lists every variable.
+The systemd unit supplies them from two `EnvironmentFile=` entries in
+[`config/systemd/roost-daemon.service`](config/systemd/roost-daemon.service):
+`.env` for non-secret settings, and `~/.config/roost/credentials.env` for the
+two broker passwords.
 
-Check a reference resolves without printing its value:
-
-```sh
-op read "op://Homelab/EMQX roost daemon/password" >/dev/null && echo ok
-```
+`.env` must hold literal non-secret values, never an `op://` reference:
+`daemon/config.js` refuses unresolved 1Password references at startup. See
+["Credentials"](#credentials) for the 1Password source of truth and the restore
+command that writes the password cache.
 
 ---
 
@@ -164,8 +165,8 @@ not resolved at start:
 
 ```
 ~/.config/roost/credentials.env      0600, outside the repo
-  ROOST_MQTT_PASSWORD=...            daemon, readwrite roost/#
-  ROOST_MQTT_RENDERER_PASSWORD=...   panel, read-only roost/#
+  ROOST_MQTT_PASSWORD='...'          daemon, readwrite roost/#
+  ROOST_MQTT_RENDERER_PASSWORD='...' panel, read-only roost/#
 ```
 
 **1Password remains the source of truth** — the two `Mosquitto - roost …` items
@@ -177,19 +178,20 @@ until someone logged in and unlocked.
 Restore it after any environment reset, while 1Password is unlocked:
 
 ```sh
-install -d -m 700 ~/.config/roost && umask 077 && {
-  printf 'ROOST_MQTT_PASSWORD=%s\n'          "$(op read 'op://Homelab/Mosquitto - roost daemon/password')"
-  printf 'ROOST_MQTT_RENDERER_PASSWORD=%s\n' "$(op read 'op://Homelab/Mosquitto - roost panel/password')"
-} > ~/.config/roost/credentials.env
+./scripts/provision-credentials.sh
 ```
 
-The values are piped, never passed as arguments, so they do not reach a process
-listing or shell history.
+Run that from the repo root. It reads both values into 0600 same-directory temp
+files before touching the existing cache, then writes single-quoted
+`EnvironmentFile` assignments so backslashes and boundary whitespace survive
+verbatim. It refuses a failed or empty read, NUL, carriage return, newline,
+single quote, invalid UTF-8, byte order marks, and Unicode noncharacters, and
+keeps the password values out of shell history and external process argv.
 
-**It must be `KEY=VALUE`.** A bare secret in a systemd `EnvironmentFile` yields
-an empty variable with no error at all. If the cache is missing or incomplete
-the daemon refuses to start and prints the command above, rather than failing
-later as a bare `not authorized` from the broker.
+**It must be `KEY='VALUE'`.** A bare secret in a systemd `EnvironmentFile`
+yields an empty variable with no error at all. If the cache is missing or
+incomplete the daemon refuses to start and prints the command above, rather than
+failing later as a bare `not authorized` from the broker.
 
 `.env` holds the nine non-secret settings — broker host and port, both
 usernames, topic, WebSocket URL, HTTP bind, state source. The unit reads both
@@ -296,7 +298,9 @@ Two things it will not do:
   `--scopes operator.approvals` would cost roost its `operator.read`.
 
 The current daemon picks up Labby's stored scopes automatically. Omar's
-separate device file is not used until M2 adds the second Gateway connection.
+separate device file is used as soon as `omar` appears in
+`ROOST_OPENCLAW_GATEWAYS`, which still defaults to `labby` alone until the §7
+step 6 config flip.
 
 > **Scope is authority, and it is broader than roost.** On OpenClaw
 > 2026.7.2-beta.7, an approval carrying no explicit reviewer device list is

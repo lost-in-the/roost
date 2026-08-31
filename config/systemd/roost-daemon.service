@@ -33,10 +33,7 @@ WorkingDirectory=%h/Work/lost-in-the/roost
 # is none at boot, so the unit restart-looped until someone logged in.
 #
 # Restore after an environment reset, while 1Password is unlocked:
-#   install -d -m 700 ~/.config/roost && umask 077 && {
-#     printf 'ROOST_MQTT_PASSWORD=%s\n' "$(op read 'op://Homelab/Mosquitto - roost daemon/password')";
-#     printf 'ROOST_MQTT_RENDERER_PASSWORD=%s\n' "$(op read 'op://Homelab/Mosquitto - roost panel/password')";
-#   } > ~/.config/roost/credentials.env
+#   ./scripts/provision-credentials.sh
 #
 # If the cache is missing the daemon refuses to start and prints that command,
 # rather than failing later as a bare "not authorized" from the broker.

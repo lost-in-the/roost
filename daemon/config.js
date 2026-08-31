@@ -4,9 +4,10 @@ import { parseGatewayAliases } from './openclaw/gateway-targets.js';
 /**
  * Configuration comes from plain environment variables.
  *
- * The systemd unit supplies them via `op run --env-file`, so secrets live in
- * 1Password and never touch the repo or the unit file. Nothing here reads a
- * secret from disk itself.
+ * The systemd unit supplies them from two `EnvironmentFile=` entries: `.env`
+ * for non-secret settings, and `~/.config/roost/credentials.env` for the
+ * broker passwords. Secrets still never touch the repo or the unit file, and
+ * nothing here reads a secret from disk itself.
  */
 
 export const VALID_SOURCES = ['mock', 'openclaw'];
@@ -27,10 +28,7 @@ const isLoopback = (host) => ['127.0.0.1', 'localhost', '::1', '[::1]'].includes
 
 const CREDENTIALS_HINT =
   'Restore it while 1Password is unlocked:\n' +
-  '  install -d -m 700 ~/.config/roost && umask 077 && {\n' +
-  "    printf 'ROOST_MQTT_PASSWORD=%s\\n' \"$(op read 'op://Homelab/Mosquitto - roost daemon/password')\";\n" +
-  "    printf 'ROOST_MQTT_RENDERER_PASSWORD=%s\\n' \"$(op read 'op://Homelab/Mosquitto - roost panel/password')\";\n" +
-  '  } > ~/.config/roost/credentials.env';
+  '  ./scripts/provision-credentials.sh';
 
 /**
  * The passwords come from ~/.config/roost/credentials.env, a provisionable
