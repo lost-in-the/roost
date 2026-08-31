@@ -14,6 +14,14 @@ cleanup() {
   rm -f -- "${raw_daemon:-}" "${raw_panel:-}" "${tmp:-}"
 }
 
+on_signal() {
+  local signal="$1"
+  trap '' HUP INT TERM
+  cleanup
+  trap - EXIT HUP INT TERM
+  kill -s "$signal" "$$"
+}
+
 read_secret() {
   local field="$1"
   local path="$2"
@@ -105,7 +113,10 @@ command -v op >/dev/null || {
   exit 1
 }
 install -d -m 700 "$config_dir"
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'on_signal HUP' HUP
+trap 'on_signal INT' INT
+trap 'on_signal TERM' TERM
 raw_daemon=$(mktemp "$config_dir/roost-daemon.XXXXXX")
 daemon=$(read_secret ROOST_MQTT_PASSWORD 'op://Homelab/Mosquitto - roost daemon/password' "$raw_daemon")
 raw_panel=$(mktemp "$config_dir/roost-panel.XXXXXX")
@@ -114,6 +125,7 @@ tmp=$(mktemp "$config_dir/credentials.env.XXXXXX")
 chmod 600 "$tmp"
 printf "ROOST_MQTT_PASSWORD='%s'\nROOST_MQTT_RENDERER_PASSWORD='%s'\n" "$daemon" "$panel" > "$tmp"
 chmod 600 "$tmp"
+trap '' HUP INT TERM
 mv -f "$tmp" "$target"
 tmp=
 rm -f -- "$raw_daemon" "$raw_panel"
