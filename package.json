@@ -10,6 +10,7 @@
   "scripts": {
     "test": "node --test --test-timeout=20000 test/*.test.js",
     "accept:m2": "node --test --test-timeout=120000 test/acceptance/m2-approval-browser.test.js",
+    "accept:m2:physical": "node scripts/run-m2-physical-acceptance.mjs",
     "capture:panel": "./scripts/capture-panel-states.sh",
     "start": "node daemon/index.js",
     "dev": "ROOST_SOURCE=mock node daemon/index.js",
