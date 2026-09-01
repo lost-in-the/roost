@@ -18,8 +18,19 @@ on_signal() {
   local signal="$1"
   trap '' HUP INT TERM
   cleanup
-  trap - EXIT HUP INT TERM
+  trap - EXIT
+  # Keep the other termination signals ignored until this process is gone.
+  # A later HUP/INT/TERM cannot replace the signal that caused cleanup.
+  trap - "$signal"
   kill -s "$signal" "$$"
+}
+
+make_temp() {
+  # Bash defers the parent trap while this foreground command substitution is
+  # running. Ignore the same signals in mktemp so a process-group signal cannot
+  # kill it after creation but before its path is assigned for cleanup.
+  trap '' HUP INT TERM
+  exec mktemp "$1"
 }
 
 read_secret() {
@@ -117,11 +128,11 @@ trap cleanup EXIT
 trap 'on_signal HUP' HUP
 trap 'on_signal INT' INT
 trap 'on_signal TERM' TERM
-raw_daemon=$(mktemp "$config_dir/roost-daemon.XXXXXX")
+raw_daemon=$(make_temp "$config_dir/roost-daemon.XXXXXX")
 daemon=$(read_secret ROOST_MQTT_PASSWORD 'op://Homelab/Mosquitto - roost daemon/password' "$raw_daemon")
-raw_panel=$(mktemp "$config_dir/roost-panel.XXXXXX")
+raw_panel=$(make_temp "$config_dir/roost-panel.XXXXXX")
 panel=$(read_secret ROOST_MQTT_RENDERER_PASSWORD 'op://Homelab/Mosquitto - roost panel/password' "$raw_panel")
-tmp=$(mktemp "$config_dir/credentials.env.XXXXXX")
+tmp=$(make_temp "$config_dir/credentials.env.XXXXXX")
 chmod 600 "$tmp"
 printf "ROOST_MQTT_PASSWORD='%s'\nROOST_MQTT_RENDERER_PASSWORD='%s'\n" "$daemon" "$panel" > "$tmp"
 chmod 600 "$tmp"
