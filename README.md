@@ -62,6 +62,8 @@ Only the first is bound; the second must keep targeting `sunshine-vd`.
 ## Try it in three terminals
 
 No broker, no panel hardware, and no OpenClaw needed.
+Requires Node.js 22.19.0 or newer, matching the minimum supported by the pinned
+OpenClaw client packages.
 
 ```sh
 npm install
@@ -443,7 +445,7 @@ daemon/
   sources/
     state-source.js the interface everything else is built against
     mock.js         scripted timelines
-    openclaw.js     STUB — see docs/DECISIONS.md D-001
+    openclaw.js     live Gateway subscription + approval resolution
 renderer/           plain HTML/CSS/JS, no framework, no build step
   components/       shared UI, mountable by any surface
   staleness.js      when to stop believing the panel
@@ -455,10 +457,10 @@ scripts/            install, derive-monitor, launch-panel, dev-broker
 docs/               decisions and the original plans
 ```
 
-`npm test` runs 259 tests with Node's built-in runner. Aggregation and the log are
-tested as pure units; the publisher is tested against a **real** in-process
-broker, including cutting sockets to prove the Last Will fires and reconnection
-continues.
+`npm test` runs the full suite with Node's built-in runner. Aggregation and the
+log are tested as pure units; the publisher is tested against a **real**
+in-process broker, including cutting sockets to prove the Last Will fires and
+reconnection continues.
 
 ---
 
