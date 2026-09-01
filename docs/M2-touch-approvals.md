@@ -552,9 +552,9 @@ decisions. They do not block the panel's first complete approval path.
 
 ## 9. Definition of done, when it is built
 
-- [ ] A reversible prompt is approved from the panel and the run continues
+- [x] A reversible prompt is approved from the panel and the run continues
 - [x] Labby and Omar remain visible simultaneously through separate identities
-- [ ] A harmless approval from each Gateway is answered from the panel
+- [x] A harmless approval from each Gateway is answered from the panel
 - [x] Native `/codex bind` approvals remain absent and the Codex classes of the
       2026-08-27 spike remain documented unsupported, per D-016
 - [ ] A destructive prompt requires a deliberate second confirm
@@ -566,7 +566,8 @@ decisions. They do not block the panel's first complete approval path.
 - [x] A prompt past `expires_at` is dead with no new message required
 - [x] A label that cannot be summarised in 64 characters becomes a non-approvable
       handoff instead of an approvable prompt
-- [ ] The Stream Deck still works, unchanged and unmodified
+- [ ] The Stream Deck still works, unchanged and unmodified — deferred by the
+      operator; it is not part of the M2 approval surface
 - [x] Published MQTT messages, exercised daemon log lines, and renderer view
       state contain no raw approval payloads
 
@@ -618,3 +619,28 @@ pending projection in approximately 163 ms on Labby and 272 ms on Omar. This
 proves real two-Gateway lifecycle and sub-five-second terminal propagation, but
 does not tick the panel-answer or laptop-buttons items because a handoff has no
 buttons to exercise.
+
+**Bounded-purpose live acceptance, 2026-09-01.** The temporary, tested
+`roost-acceptance` plugin supplied static persistence-safe titles and exact
+`pluginId/toolName` provenance. Roost classified only
+`roost-acceptance/roost_reversible_probe` as reversible through the new
+operator-owned allowlist. The physical panel displayed the Labby prompt with
+actor/Gateway attribution and a decreasing expiry countdown. Allowing it once
+returned the real agent run to `thinking`; the tool completed and the run
+replied exactly `LABBY PROBE CONTINUED` with one successful tool call.
+
+An independently issued bounded Omar Gateway request also projected with Omar
+attribution, was answered from the physical panel, and disappeared after the
+terminal event in approximately 185 ms. That request was denied, so this is an
+answer-path result rather than a claim that an Omar Claude run continued.
+Together these observations tick the first and per-Gateway answer items above
+without claiming more than each drill measured.
+
+The same fixture exposed an OpenClaw boundary outside Roost: later direct
+`plugin.approval.request` calls were not consistently broadcast to an already
+connected session observer, and one Labby Claude CLI plugin call reported
+`Plugin approval unavailable (no approval route)` after its pending projection
+was visible for only a few seconds. The remaining destructive-on-glass,
+laptop-button and canonical-winner items stay unticked until their named live
+observations can be made; the offline browser acceptance still pins all three
+Roost-controlled behaviors.

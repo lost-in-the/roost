@@ -101,9 +101,23 @@ hyprctl clients -j \
 
 # 7. Fullscreen the panel so it covers the bar and uses the whole glass.
 hyprctl dispatch "hl.dsp.focus({ window = \"address:${address}\" })" >/dev/null
+for _ in $(seq 1 20); do
+  [ "$(hyprctl activewindow -j | jq -r '.address // empty')" = "$address" ] && break
+  sleep 0.05
+done
+[ "$(hyprctl activewindow -j | jq -r '.address // empty')" = "$address" ] \
+  || { log "panel did not receive focus before fullscreen"; exit 1; }
+
 if [ "$(hyprctl clients -j | jq -r --arg a "$address" '.[] | select(.address == $a) | .fullscreen')" = "0" ]; then
   hyprctl dispatch 'hl.dsp.window.fullscreen()' >/dev/null
 fi
+for _ in $(seq 1 20); do
+  fullscreen=$(hyprctl clients -j | jq -r --arg a "$address" '.[] | select(.address == $a) | .fullscreen')
+  [ -n "$fullscreen" ] && [ "$fullscreen" != "0" ] && break
+  sleep 0.05
+done
+[ -n "${fullscreen:-}" ] && [ "$fullscreen" != "0" ] \
+  || { log "panel did not enter fullscreen"; exit 1; }
 
 # 8. Give the desk back to the human.
 if [ -n "$previous_monitor" ]; then

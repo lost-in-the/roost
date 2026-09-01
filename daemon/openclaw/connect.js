@@ -32,7 +32,13 @@ export function resolveGatewayUrl(alias, env = process.env) {
   return target.url;
 }
 
-export function createOpenClawSource({ alias, deviceFile, url, env = process.env } = {}) {
+export function createOpenClawSource({
+  alias,
+  deviceFile,
+  url,
+  env = process.env,
+  reversibleApprovalTools = [],
+} = {}) {
   if (!alias) throw new Error('createOpenClawSource requires a gateway alias');
   const resolvedDeviceFile = deviceFile || resolveDeviceFile(alias, env);
   const stored = readDeviceToken(resolvedDeviceFile);
@@ -52,5 +58,6 @@ export function createOpenClawSource({ alias, deviceFile, url, env = process.env
     deviceToken: stored.token,
     deviceIdentity: loadOrCreateDeviceIdentity(resolvedDeviceFile),
     scopes: stored.scopes?.length ? stored.scopes : undefined,
+    reversibleApprovalTools,
   });
 }

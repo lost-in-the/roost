@@ -147,6 +147,7 @@ export class OpenClawStateSource extends StateSource {
     debounceMs = 150,
     trailingSnapshotMs = 2000,
     reconcileMs = 60000,
+    reversibleApprovalTools = [],
     setTimeoutFn = setTimeout,
     clearTimeoutFn = clearTimeout,
   } = {}) {
@@ -155,6 +156,7 @@ export class OpenClawStateSource extends StateSource {
       createClient, url, deviceToken, deviceIdentity, scopes, debounceMs,
       trailingSnapshotMs, reconcileMs, setTimeoutFn, clearTimeoutFn,
     });
+    this.reversibleApprovalTools = new Set(reversibleApprovalTools);
     this.client = null;
     this.stopped = true;
     this.timer = null;
@@ -348,6 +350,7 @@ export class OpenClawStateSource extends StateSource {
       .map((approval) => projectApproval(approval, {
         fromTruncatedReplay: replay?.truncated === true,
         onDrop: (msg) => this.emit('warning', msg),
+        reversibleTools: this.reversibleApprovalTools,
       }))
       .filter(Boolean);
     this.approvals.replaceReplay(sessionKey, projected, { truncated: replay?.truncated === true });
@@ -357,7 +360,10 @@ export class OpenClawStateSource extends StateSource {
     const sessionKey = typeof payload?.sessionKey === 'string' ? payload.sessionKey : null;
     if (!sessionKey) return;
     if (payload?.phase === 'pending' && payload?.approval?.status === 'pending') {
-      const projected = projectApproval(payload.approval, { onDrop: (msg) => this.emit('warning', msg) });
+      const projected = projectApproval(payload.approval, {
+        onDrop: (msg) => this.emit('warning', msg),
+        reversibleTools: this.reversibleApprovalTools,
+      });
       if (!projected) return;
       this.approvals.upsertPending(sessionKey, {
         ...projected,

@@ -453,6 +453,43 @@ test('projects a pending approval onto the matching agent without exposing raw p
   source.stop();
 });
 
+test('source applies the operator reversible allowlist to replayed plugin approvals', async () => {
+  const gw = fakeGateway({
+    sessions: [sess('a', true)],
+    onRequest(method) {
+      if (method !== 'sessions.messages.subscribe') return undefined;
+      return Promise.resolve({
+        approvalReplay: {
+          approvals: [{
+            id: 'appr-allowlisted',
+            status: 'pending',
+            expiresAtMs: Date.now() + 5000,
+            presentation: {
+              kind: 'plugin',
+              pluginId: 'roost-acceptance',
+              toolName: 'roost_reversible_probe',
+              allowedDecisions: ['allow-once', 'deny'],
+              title: 'Allow safe Roost probe?',
+            },
+          }],
+          truncated: false,
+        },
+      });
+    },
+  });
+  const source = makeSource(gw, {
+    reversibleApprovalTools: ['roost-acceptance/roost_reversible_probe'],
+  });
+  const seen = [];
+  source.on('agents', (agents) => seen.push(agents));
+  source.start();
+  gw.state.options.onHelloOk({ auth: {} });
+  await settle();
+
+  assert.equal(seen.at(-1)[0].prompt.reversible, true);
+  source.stop();
+});
+
 test('a blank approval label becomes a visible handoff instead of disappearing', async () => {
   const gw = fakeGateway({
     sessions: [sess('a', true)],

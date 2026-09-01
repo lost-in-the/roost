@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadConfig } from '../daemon/config.js';
+import { loadConfig, parseReversibleApprovalTools } from '../daemon/config.js';
 
 const base = { ROOST_MQTT_HOST: 'broker.example', ROOST_MQTT_WS_URL: 'ws://broker.example:8083/mqtt' };
 
@@ -90,6 +90,23 @@ test('openclaw gateway aliases default conservatively to labby only', () => {
 test('openclaw gateway aliases are parsed as an ordered list', () => {
   const cfg = loadConfig({ ...base, ROOST_OPENCLAW_GATEWAYS: 'omar, labby' });
   assert.deepEqual(cfg.openclawGateways, ['omar', 'labby']);
+});
+
+test('reversible approval tools are an explicit deduplicated plugin/tool allowlist', () => {
+  assert.deepEqual(
+    parseReversibleApprovalTools('roost-acceptance/roost_reversible_probe, other/tool,roost-acceptance/roost_reversible_probe'),
+    ['roost-acceptance/roost_reversible_probe', 'other/tool'],
+  );
+  assert.deepEqual(loadConfig(base).reversibleApprovalTools, []);
+});
+
+test('malformed reversible approval tool references fail at config load', () => {
+  for (const value of ['tool-only', '/tool', 'plugin/', 'plugin/tool/extra', 'Plugin/tool']) {
+    assert.throws(
+      () => loadConfig({ ...base, ROOST_OPENCLAW_REVERSIBLE_TOOLS: value }),
+      /pluginId\/toolName/,
+    );
+  }
 });
 
 test('an invalid openclaw gateway alias is rejected at config load', () => {

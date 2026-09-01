@@ -19,6 +19,21 @@ const int = (value, fallback) => {
   return n;
 };
 
+const REVERSIBLE_TOOL_REF = /^[a-z0-9][a-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+export function parseReversibleApprovalTools(value) {
+  if (value === undefined || value.trim() === '') return [];
+  const refs = value.split(',').map((entry) => entry.trim()).filter(Boolean);
+  for (const ref of refs) {
+    if (!REVERSIBLE_TOOL_REF.test(ref)) {
+      throw new Error(
+        `ROOST_OPENCLAW_REVERSIBLE_TOOLS entry ${JSON.stringify(ref)} must be pluginId/toolName`,
+      );
+    }
+  }
+  return [...new Set(refs)];
+}
+
 /**
  * Is this the local dev broker? `scripts/dev-broker.js` is the only thing that
  * serves WebSocket on 8083, so the derived default below is only ever right
@@ -99,9 +114,13 @@ export function loadConfig(env = process.env) {
   // Flipping production to labby,omar is the later deploy change, but typos in
   // the configured list should still fail at load even before OpenClaw is used.
   const openclawGateways = parseGatewayAliases(env.ROOST_OPENCLAW_GATEWAYS, ['labby']);
+  const reversibleApprovalTools = parseReversibleApprovalTools(
+    env.ROOST_OPENCLAW_REVERSIBLE_TOOLS,
+  );
 
   return {
     openclawGateways,
+    reversibleApprovalTools,
     source,
     mockScript: env.ROOST_MOCK_SCRIPT || 'demo',
     heartbeatMs,

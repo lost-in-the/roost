@@ -34,6 +34,13 @@ each Gateway is answered from the panel” until OpenClaw supplies the bounded
 purpose summary described below and the resulting safe card is actually
 answered on glass.
 
+**Bounded fixture result, 2026-09-01.** A temporary plugin with static safe
+copy produced an Omar-attributed actionable card and it was answered on the
+physical panel; terminal removal took about 185 ms. This closes the Roost and
+Gateway transport question for a well-formed plugin approval, but it was a
+direct Gateway request, not a policy-gated Omar Claude run, so the narrower
+acceptance item in this section remains open.
+
 **Boundaries.** Select an actual policy-gated Omar Claude operation; do not
 consume legacy raw approval events, borrow another Gateway's device identity,
 or treat a filesystem refusal as an approval.
@@ -59,6 +66,30 @@ handoffs because `Bash` is not enough information to approve an action.
 persistence-safe purpose summary. Roost must not derive one by parsing commands
 or serialized tool input. When that exists, add it to the allowlist and keep the
 64-character handoff boundary.
+
+**Local plugin path shipped 2026-09-01.** Plugin authors can already supply a
+bounded static title plus exact `pluginId/toolName`. D-018 lets the operator
+classify only named pairs as reversible through
+`ROOST_OPENCLAW_REVERSIBLE_TOOLS`; unknown tools still take two taps. The
+checked-in `test/fixtures/openclaw-roost-acceptance/` package makes this path
+repeatable without publishing parameters or installing a permanent diagnostic
+plugin. This does not solve generic Claude-native Bash summaries.
+
+## Upstream acceptance — stabilize the Claude CLI plugin approval route
+
+**Observed 2026-09-01.** A real Labby Claude CLI turn completed once after the
+physical panel approved the bounded reversible probe. A later plugin tool call
+projected pending for only a few seconds and then failed with `Plugin approval
+unavailable (no approval route)`. Direct `plugin.approval.request` calls also
+did not consistently broadcast pending state to an already-connected Roost
+observer, even though one Omar request did project and resolve normally.
+
+**Ownership.** This is an OpenClaw routing/event-delivery issue, not a Roost
+renderer or coordinator behavior. Keep the deterministic fake-Gateway and
+browser coverage in Roost, but do not weaken replay, consume raw approval
+events, or add automatic retries to conceal it. Re-run the temporary fixture
+after an OpenClaw upgrade and close this item only when repeated Labby and Omar
+agent turns retain the route for the full advertised deadline.
 
 The projection requirements remain:
 

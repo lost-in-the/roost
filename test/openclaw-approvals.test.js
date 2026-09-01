@@ -52,6 +52,17 @@ test('projection drops codex provenance only by pluginId and logs the correlatio
   assert.doesNotMatch(seen[0], /Approve tiny change/);
 });
 
+test('projection reads plugin provenance from the protocol presentation', () => {
+  const seen = [];
+  assert.equal(projectApproval(rawApproval({
+    presentation: {
+      ...rawApproval().presentation,
+      pluginId: 'openclaw-codex-app-server',
+    },
+  }), { onDrop: (msg) => seen.push(msg) }), null);
+  assert.match(seen[0], /pluginId=openclaw-codex-app-server/);
+});
+
 test('a long label survives projection untruncated and later downgrades to handoff in aggregate', () => {
   const projected = projectApproval(rawApproval({
     presentation: {
@@ -87,6 +98,46 @@ test('reversible defaults to false when it cannot be determined', () => {
       title: 'Unclear action',
     },
   })).reversible, false);
+});
+
+test('only an operator-allowlisted exact plugin/tool pair becomes reversible', () => {
+  const approval = rawApproval({
+    presentation: {
+      kind: 'plugin',
+      pluginId: 'roost-acceptance',
+      toolName: 'roost_reversible_probe',
+      allowedDecisions: ['allow-once', 'deny'],
+      title: 'Allow safe Roost probe?',
+    },
+  });
+  const allowlist = new Set(['roost-acceptance/roost_reversible_probe']);
+
+  assert.equal(projectApproval(approval).reversible, false);
+  assert.equal(projectApproval(approval, { reversibleTools: allowlist }).reversible, true);
+  assert.equal(projectApproval({
+    ...approval,
+    presentation: { ...approval.presentation, reversible: false },
+  }, { reversibleTools: allowlist }).reversible, false,
+  'an explicit source false must override the local fallback allowlist');
+  assert.equal(projectApproval({
+    ...approval,
+    presentation: { ...approval.presentation, toolName: 'roost_irreversible_probe' },
+  }, { reversibleTools: allowlist }).reversible, false);
+});
+
+test('a title cannot spoof the operator reversible allowlist', () => {
+  const projected = projectApproval(rawApproval({
+    presentation: {
+      kind: 'plugin',
+      pluginId: 'untrusted-plugin',
+      toolName: 'other_tool',
+      allowedDecisions: ['allow-once', 'deny'],
+      title: 'roost-acceptance/roost_reversible_probe',
+    },
+  }), {
+    reversibleTools: new Set(['roost-acceptance/roost_reversible_probe']),
+  });
+  assert.equal(projected.reversible, false);
 });
 
 test('a plugin approval still projects to roost approve_reject and survives aggregate', () => {

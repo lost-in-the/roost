@@ -31,7 +31,15 @@ function deriveSummary(presentation) {
   };
 }
 
-function deriveReversible(presentation) {
+function presentationToolRef(approval) {
+  const pluginId = cleanText(approval?.presentation?.pluginId)
+    ?? cleanText(approval?.pluginId);
+  const toolName = cleanText(approval?.presentation?.toolName);
+  return pluginId && toolName ? `${pluginId}/${toolName}` : null;
+}
+
+function deriveReversible(approval, reversibleTools) {
+  const presentation = approval?.presentation;
   const metadata = presentation?.metadata;
   const candidates = [
     presentation?.reversible,
@@ -43,6 +51,8 @@ function deriveReversible(presentation) {
   for (const value of candidates) {
     if (typeof value === 'boolean') return value;
   }
+  const toolRef = presentationToolRef(approval);
+  if (toolRef && reversibleTools.has(toolRef)) return true;
   return false;
 }
 
@@ -57,8 +67,11 @@ export function isTerminalApprovalStatus(status) {
 export function projectApproval(approval, {
   fromTruncatedReplay = false,
   onDrop = () => {},
+  reversibleTools = new Set(),
 } = {}) {
-  if (approval?.pluginId === UNSUPPORTED_PLUGIN_ID) {
+  const pluginId = cleanText(approval?.presentation?.pluginId)
+    ?? cleanText(approval?.pluginId);
+  if (pluginId === UNSUPPORTED_PLUGIN_ID) {
     onDrop(`dropping approval correlation=${approvalCorrelation(approval?.id)} pluginId=${UNSUPPORTED_PLUGIN_ID}`);
     return null;
   }
@@ -81,7 +94,7 @@ export function projectApproval(approval, {
   return {
     id: approval.id,
     gatewayKind: kind,
-    reversible: deriveReversible(approval.presentation),
+    reversible: deriveReversible(approval, reversibleTools),
     status: approval.status,
     createdAtMs: finiteTimestamp(approval?.createdAtMs),
     expiresAtMs: finiteTimestamp(approval?.expiresAtMs),

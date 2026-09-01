@@ -37,7 +37,7 @@ work.
 | Hyprland output pinning | working, verified on the physical panel |
 | Physical panel | connected and live, 1024×600 on `HDMI-A-1` |
 | OpenClaw integration | live against separate Labby/Omar identities, each paired with `operator.read` + `operator.approvals` |
-| Touch approvals | deployed; real Labby/Omar Claude prompts verified on glass as safe handoffs, bounded-purpose answer-on-glass case still open |
+| Touch approvals | deployed; dual-Gateway lifecycle and a bounded Labby run are verified on glass; generic Claude-native purpose summaries remain upstream-gated |
 | `stalled` detection | observer health `stuck` maps to `stalled`; unknown health still fails back to the session's active/idle reading |
 | Touch | working — bound to the panel output, see [`config/hypr/roost.lua`](config/hypr/roost.lua) |
 
@@ -266,6 +266,21 @@ The legacy unqualified `ROOST_OPENCLAW_URL` and
 `ROOST_OPENCLAW_DEVICE_FILE` still work, but only for Labby. Reusing one
 unqualified override for both Gateways would be the exact device-identity reuse
 the M2 design forbids.
+
+OpenClaw's current plugin approval schema does not carry a trustworthy
+reversibility bit. One-tap approval is therefore an explicit operator policy,
+expressed as a comma-separated list of exact `pluginId/toolName` pairs:
+
+```sh
+ROOST_OPENCLAW_REVERSIBLE_TOOLS=example-plugin/read_only_status,other-plugin/inspect
+```
+
+An absent or unmatched pair is irreversible from Roost's point of view and
+requires the renderer's deliberate second confirm. Titles, descriptions,
+severity, commands and arguments never influence this classification. The
+acceptance-only plugin under `test/fixtures/openclaw-roost-acceptance/` is a
+repeatable, no-secret way to exercise both paths; it is not installed in
+production.
 
 Revoke each identity only through its source Gateway:
 
