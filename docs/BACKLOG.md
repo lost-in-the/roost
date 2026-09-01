@@ -12,23 +12,27 @@ or is rejected by its service/filesystem boundary without emitting a
 `session.approval`.  A request through its stated approval-capable broker path
 did not create a pending projection during the on-device check.
 
-**Classification.** This does not establish a broken Omar approval path.
+**Classification.** This did not establish a broken Omar approval path.
 D-015's owner-authorized spike already proved Claude-native pending, replay,
 expiry and source-local resolution on Omar. Omar-Codex is deliberately
 approval-free, a filesystem denial grants no authority, and typed-broker
-signatures are a separate surface. M2's on-device evidence remains incomplete:
-do not tick
-"a harmless approval from each Gateway is answered from the panel" until a
-Claude-native Omar request produces a pending projection and is resolved
-source-locally.
+signatures are a separate surface.
 
-**Rechecked 2026-09-01.** Omar has configured Claude models and Roost's paired
-device still holds `operator.approvals`, but Omar's effective exec policy is
-`ask=off`. Changing it to `ask=on-miss` is an external OpenClaw policy change,
-not a Roost code change, and was not done by the acceptance spike. It would not
-by itself complete this item: a generic `Claude native tool: Bash` presentation
-still correctly becomes a handoff until OpenClaw supplies the bounded purpose
-summary described below.
+**Exercised 2026-09-01.** Omar has configured Claude models and Roost's paired
+device holds `operator.approvals`. Its policy was changed from `ask=off` to
+`ask=on-miss` for one harmless stdout-only Claude turn. The request produced a
+pending projection on the physical panel, survived reviewer reconnect, and was
+denied source-locally without executing; the policy was then verified restored
+to `ask=off` for Omar, Omar-Codex, and Omar-Review. Labby passed the same drill
+under its existing `ask=on-miss` policy. Terminal removal reached Roost in well
+under one second on both Gateways.
+
+The item remains open for one precise reason: both live cards were generic
+`Claude native tool: Bash` handoffs, with no answer buttons. Transport and Omar
+policy feasibility are no longer unknown. Do not tick “a harmless approval from
+each Gateway is answered from the panel” until OpenClaw supplies the bounded
+purpose summary described below and the resulting safe card is actually
+answered on glass.
 
 **Boundaries.** Select an actual policy-gated Omar Claude operation; do not
 consume legacy raw approval events, borrow another Gateway's device identity,
