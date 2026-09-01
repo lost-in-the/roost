@@ -517,7 +517,7 @@ both Gateways. It must also determine whether merely subscribing makes Roost an
 available approval route. No legacy delivery capability may be advertised
 until the decision handler is ready and its routing effect is measured.
 
-**Gate result, 2026-08-27: partial pass; implementation remains stopped.** The
+**Gate result, 2026-08-27: partial pass; implementation subsequently shipped.** The
 final, separate Roost identities were paired to Labby and Omar with only
 `operator.read` and `operator.approvals`. Claude-native plugin approvals on both
 Gateways passed pending events, reconnect replay, source-local terminal events,

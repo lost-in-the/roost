@@ -585,3 +585,18 @@ of raw approval payload strings offline. The physical panel has since shown the
 two live Gateway identities and the renderer's long-summary handoff. The
 remaining unticked boxes still require their exact live exercises; stopping the
 daemon is not substituted for the specifically named 35-second broker block.
+
+`npm run accept:m2` is the longer, isolated browser acceptance pass. It launches
+the real renderer in system Chromium, serves it through the real HTTP route,
+and carries retained state through a private Aedes TCP/WebSocket broker. It
+clicks both qualified Gateway ids, proves one-tap reversible and two-tap
+irreversible behavior, measures removal after an outside answer, renders the
+canonical winner of a first-answer race, and cuts only the browser's broker
+path for a full 35 seconds before attempting a synthetic click. It does not
+read deployment config or credentials and never touches the shared broker.
+
+That command and `test/approval-integration.test.js` deliberately overlap at
+MQTT, HTTP, and renderer decision handling: together they exercise the complete
+Roost-controlled path without pretending the fake Gateway or headless browser
+is a real Claude run, physical finger, or Stream Deck. The corresponding boxes
+remain unticked until those exact live observations are recorded.
