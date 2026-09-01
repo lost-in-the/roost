@@ -108,6 +108,25 @@ Initial contract. Topic `roost/agents/state`, retained, with a Last Will.
     dropped rather than surfacing as a handoff — a dead question is not a
     decision waiting for you anywhere.
 
+- **`roster` and `prompt.actor` / `prompt.summary` / `prompt.queue`**
+  (2026-08-31). Additive actor and approval-queue projection.
+
+  `roster` is daemon ordered and groups sessions by the reviewer-safe actor plus
+  owning Gateway. It contains state and counts only—never session/run ids or
+  labels. The prompt carries the same actor attribution, the exact bounded
+  summary displayed with it, and `{ position, total }` for the daemon-owned
+  global approval queue. Old renderers ignore all four fields.
+
+  Queue order is earliest expiry, then creation time, then the source-qualified
+  prompt id. Only the first item crosses MQTT; `total` says more are waiting
+  without turning browser state into another approval store.
+
+  OpenClaw plugin `description` and `detail` remain forbidden: Claude-native
+  descriptions can contain serialized tool input, including commands and paths,
+  and MQTT is a retained/browser boundary. A generic title such as
+  `Claude native tool: Bash` is displayed but downgraded to `handoff`; tool
+  class alone is not enough to place Allow beside it.
+
 ### Decisions baked into v1
 
 - **`primary_run_id`, not `run_id`.** The old name implied a single run in a

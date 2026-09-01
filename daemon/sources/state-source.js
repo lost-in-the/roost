@@ -20,11 +20,13 @@ import { EventEmitter } from 'node:events';
  *
  * Each agent record:
  *   { id: string,           stable identity across emissions
+ *     actorId: string|null, human actor identity, not a session key
  *     state: string,        idle | listening | thinking | stalled | needs_attention
  *     label: string|null,   human-readable; truncated later, at the schema boundary
  *     runId: string|null,   the source's own run identifier
  *     urgency: string,      ambient | notify | blocking
- *     since: number }       epoch ms when this agent entered `state`
+ *     since: number,        epoch ms when this agent entered `state`
+ *     prompts?: Array }     pending safe projections; aggregation owns ordering
  *
  * Note `offline` is not a valid agent state. Offline describes the daemon, not
  * an agent, and is published by the broker via Last Will.

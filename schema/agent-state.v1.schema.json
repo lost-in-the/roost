@@ -50,7 +50,7 @@
       "type": ["object", "null"],
       "required": ["id", "kind", "reversible"],
       "additionalProperties": true,
-      "description": "An open question from the agent named by 'primary_run_id', answerable from a surface that supports it. Additive to v1. NULL means the daemon supports prompts and there is none; ABSENT means the daemon predates the field. A renderer that does not understand this field shows 'needs_attention' with no buttons, which is the correct fallback: it says something needs you and sends you to a laptop.",
+      "description": "The daemon-selected open question, answerable from a surface that supports it. 'prompt.actor' names its bounded human/Gateway attribution; 'primary_run_id' remains an opaque correlation for the selected run. Additive to v1. NULL means the daemon supports prompts and there is none; ABSENT means the daemon predates the field. A renderer that does not understand this field shows 'needs_attention' with no buttons, which is the correct fallback: it says something needs you and sends you to a laptop.",
       "properties": {
         "id": {
           "type": "string",
@@ -69,6 +69,48 @@
           "type": ["string", "null"],
           "format": "date-time",
           "description": "When this question dies on its own. The independent backstop for a panel that stops hearing from the daemon: past this the panel dims the buttons with no new message required. The daemon also drops an expired prompt at aggregation, so the two mechanisms cover different failures. Null means no expiry was supplied."
+        },
+        "actor": {
+          "type": ["object", "null"],
+          "required": ["gateway", "name"],
+          "additionalProperties": false,
+          "description": "Bounded human attribution from the reviewer-safe Gateway projection. Null only when a non-OpenClaw or legacy source cannot assert an identity; renderers must not derive one from ids.",
+          "properties": {
+            "gateway": { "type": "string", "minLength": 1, "maxLength": 32 },
+            "name": { "type": "string", "minLength": 1, "maxLength": 32 }
+          }
+        },
+        "summary": {
+          "type": ["string", "null"],
+          "maxLength": 64,
+          "description": "The exact bounded text displayed for this decision. Raw presentation description/detail, commands, paths, patches and session keys are forbidden."
+        },
+        "queue": {
+          "type": "object",
+          "required": ["position", "total"],
+          "additionalProperties": false,
+          "description": "Daemon-owned global approval queue metadata. Only the selected prompt is published; this count is not a list or browser-side queue.",
+          "properties": {
+            "position": { "type": "integer", "minimum": 1 },
+            "total": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
+    "roster": {
+      "type": "array",
+      "description": "Daemon-ordered actor summaries grouped across sessions, with no session/run ids or per-agent labels.",
+      "items": {
+        "type": "object",
+        "required": ["gateway", "name", "state", "active", "pending", "primary"],
+        "additionalProperties": false,
+        "properties": {
+          "gateway": { "type": "string", "minLength": 1, "maxLength": 32 },
+          "name": { "type": "string", "minLength": 1, "maxLength": 32 },
+          "state": { "enum": ["idle", "thinking", "listening", "needs_attention", "stalled"] },
+          "active": { "type": "integer", "minimum": 0 },
+          "pending": { "type": "integer", "minimum": 0 },
+          "primary": { "type": "boolean" }
         }
       }
     }

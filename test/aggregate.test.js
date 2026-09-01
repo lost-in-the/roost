@@ -212,7 +212,60 @@ test('a well-formed prompt reaches the payload, with expiry as an iso string', (
     kind: 'approve_reject',
     reversible: true,
     expires_at: '2026-08-21T18:09:02Z',
+    actor: null,
+    summary: 'Approve deploy photopush to staging?',
+    queue: { position: 1, total: 1 },
   });
+});
+
+test('global approval ordering is earliest expiry, creation time, then qualified id', () => {
+  const base = {
+    state: 'needs_attention', urgency: 'blocking', since: NOW, runId: 'run',
+  };
+  const agents = [
+    agent({ ...base, id: 'omar:run', gateway: 'omar', actorId: 'omar', prompts: [
+      prompt({ id: 'omar:late', label: 'Late', expiresAt: LATER + 1000, createdAt: NOW }),
+      prompt({ id: 'omar:z', label: 'Z', expiresAt: LATER, createdAt: NOW }),
+    ] }),
+    agent({ ...base, id: 'labby:run', gateway: 'labby', actorId: 'labby', prompts: [
+      prompt({ id: 'labby:a', label: 'First', expiresAt: LATER, createdAt: NOW - 1 }),
+    ] }),
+  ];
+  const out = aggregate(agents, { now: NOW });
+  assert.equal(out.prompt.id, 'labby:a');
+  assert.equal(out.label, 'First');
+  assert.deepEqual(out.prompt.queue, { position: 1, total: 3 });
+  assert.deepEqual(out.prompt.actor, { gateway: 'Labby', name: 'Labby' });
+});
+
+test('roster groups sessions by actor and never publishes session ids or labels', () => {
+  const out = aggregate([
+    agent({ id: 'secret-session-one', gateway: 'labby', actorId: 'labby', state: 'thinking', label: 'secret label' }),
+    agent({ id: 'secret-session-two', gateway: 'labby', actorId: 'labby', state: 'idle' }),
+    agent({ id: 'other-session', gateway: 'omar', actorId: 'claude', state: 'idle' }),
+  ], { now: NOW });
+  assert.deepEqual(out.roster, [
+    { gateway: 'Labby', name: 'Labby', state: 'thinking', active: 1, pending: 0, primary: true },
+    { gateway: 'Omar', name: 'Claude', state: 'idle', active: 0, pending: 0, primary: false },
+  ]);
+  assert.doesNotMatch(JSON.stringify(out.roster), /secret-session|secret label/);
+});
+
+test('an unusable presentation actor falls back to the routed actor, then Gateway', () => {
+  const out = aggregate([asking({
+    id: 'omar:session', gateway: 'omar', actorId: 'omar-review',
+    prompt: prompt({ actorId: 'x'.repeat(80) }),
+  })], { now: NOW });
+  assert.deepEqual(out.prompt.actor, { gateway: 'Omar', name: 'Omar-review' });
+});
+
+test('actor attribution rejects direction controls instead of rendering spoofed identity', () => {
+  const out = aggregate([asking({
+    id: 'omar:session', gateway: 'omar', actorId: 'safe-reviewer',
+    prompt: prompt({ actorId: 'Omar\u202eLabby' }),
+  })], { now: NOW });
+  assert.deepEqual(out.prompt.actor, { gateway: 'Omar', name: 'Safe-reviewer' });
+  assert.doesNotMatch(JSON.stringify(out), /\u202e/);
 });
 
 test('prompt is null, not absent, when nothing is asking', () => {
@@ -235,6 +288,35 @@ test('the prompt comes from the agent that won the state race, not any other', (
   ], { now: NOW });
   assert.equal(out.prompt.id, 'prm_8f2a');
   assert.equal(out.primary_run_id, 'run-1d7e', 'the prompt and the run id describe one agent');
+});
+
+test('simultaneous approval prompts remain a deterministic single visible prompt', () => {
+  // The v1 payload deliberately publishes one selected prompt plus queue
+  // metadata, never the pending prompt bodies. Every request stays source-local
+  // while the panel receives the same winner on every input ordering.
+  const labby = asking({
+    id: 'labby:agent',
+    label: 'Labby approval',
+    runId: 'labby:run',
+    since: NOW,
+    prompt: prompt({ id: 'labby:approval' }),
+  });
+  const omar = asking({
+    id: 'omar:agent',
+    label: 'Omar approval',
+    runId: 'omar:run',
+    since: NOW,
+    prompt: prompt({ id: 'omar:approval' }),
+  });
+
+  const forward = aggregate([omar, labby], { now: NOW });
+  const reversed = aggregate([labby, omar], { now: NOW });
+
+  assert.equal(forward.count, 2, 'count includes both active agents, not pending prompts');
+  assert.deepEqual(forward.prompt, reversed.prompt, 'input order cannot swap a visible decision');
+  assert.equal(forward.primary_run_id, 'labby:run', 'qualified agent id is the stable equal-time tie-breaker');
+  assert.equal(forward.label, 'Labby approval');
+  assert.equal(forward.prompt.id, 'labby:approval');
 });
 
 test('a prompt past its expiry is dropped rather than advertised', () => {

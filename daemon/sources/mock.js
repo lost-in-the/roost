@@ -155,6 +155,8 @@ export class MockStateSource extends StateSource {
     const cycleOrigin = this.originEpoch + cycle * period;
     this.emit('agents', step.agents.map((a) => ({
       ...a,
+      gateway: 'demo',
+      actorId: a.actorId ?? a.id,
       since: cycleOrigin + (a.since ?? 0),
       // Same relative-to-wall-clock translation as `since`, and for the same
       // reason. Spread conditionally so an agent with no prompt stays without

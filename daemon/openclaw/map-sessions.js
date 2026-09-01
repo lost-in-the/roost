@@ -53,6 +53,13 @@ const ROUTING_PREFIXES = [
   /^explicit:/,      // created with --session-id
 ];
 
+/** The routed OpenClaw actor, never the remainder of an opaque session key. */
+export function sessionActorId(s) {
+  if (typeof s?.agentId === 'string' && s.agentId.trim() !== '') return s.agentId.trim();
+  const match = typeof s?.key === 'string' ? /^agent:([^:]+):/.exec(s.key) : null;
+  return match?.[1] ?? null;
+}
+
 /** Carry `since` forward while the state holds; restart the clock when it changes. */
 function sinceFor(previous, id, state, now) {
   const prior = previous?.get(id);
@@ -99,6 +106,7 @@ export function mapSessionsToAgents(sessions = [], digests, previous, now = Date
       const state = judged ? judged.state : (working ? 'thinking' : 'idle');
       return {
         id: s?.key ?? s?.sessionId,
+        actorId: sessionActorId(s),
         state,
         // Idle agents carry no label or run id: aggregate() ignores idle
         // agents entirely, and the mock establishes null for both.

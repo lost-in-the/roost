@@ -9,12 +9,26 @@ function finiteTimestamp(value) {
   return Number.isFinite(value) ? value : null;
 }
 
-function deriveLabel(presentation) {
-  const candidates = [presentation?.title, presentation?.label, presentation?.description, presentation?.detail];
-  for (const value of candidates) {
-    if (typeof value === 'string' && value.trim() !== '') return value.trim();
-  }
-  return null;
+function cleanText(value) {
+  if (typeof value !== 'string') return null;
+  const clean = value.trim();
+  const unsafe = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
+  return clean !== '' && !unsafe.test(clean) ? clean : null;
+}
+
+function deriveSummary(presentation) {
+  // Only the presentation title crosses Roost's retained/browser boundary.
+  // Plugin descriptions and details can contain serialized tool input,
+  // commands and paths. They are reviewer-safe inside OpenClaw, but D-015
+  // deliberately does not make them persistence-safe for MQTT.
+  const title = cleanText(presentation?.title) ?? cleanText(presentation?.label);
+  const genericClaudeTitle = title?.startsWith('Claude native tool: ') === true;
+  return {
+    label: title,
+    // A tool class is not enough information to approve an action. Keep it
+    // visible as a handoff, but never put Allow beside it.
+    sufficient: title !== null && !genericClaudeTitle,
+  };
 }
 
 function deriveReversible(presentation) {
@@ -59,7 +73,7 @@ export function projectApproval(approval, {
   const allowedDecisions = Array.isArray(approval?.presentation?.allowedDecisions)
     ? approval.presentation.allowedDecisions.filter((decision) => SAFE_DECISIONS.has(decision))
     : [];
-  const label = deriveLabel(approval?.presentation);
+  const summary = deriveSummary(approval?.presentation);
 
   // Keep the full derived label in memory here. aggregate.js applies the 64-char
   // schema cap and detects truncation there; truncating earlier would make
@@ -69,10 +83,14 @@ export function projectApproval(approval, {
     gatewayKind: kind,
     reversible: deriveReversible(approval.presentation),
     status: approval.status,
+    createdAtMs: finiteTimestamp(approval?.createdAtMs),
     expiresAtMs: finiteTimestamp(approval?.expiresAtMs),
     allowedDecisions,
-    label,
-    actionable: actionableWithPair(allowedDecisions) && !fromTruncatedReplay,
+    label: summary.label,
+    actorId: cleanText(approval?.presentation?.agentId),
+    actionable: actionableWithPair(allowedDecisions)
+      && summary.sufficient
+      && !fromTruncatedReplay,
   };
 }
 
@@ -93,16 +111,6 @@ export function expiredTerminalRecord(id, resolvedAtMs = Date.now()) {
     resolvedAtMs,
     correlation: safeApprovalSummary({ id }).correlation,
   };
-}
-
-function choosePrompt(entries) {
-  return entries
-    .slice()
-    .sort((a, b) =>
-      (finiteTimestamp(a?.expiresAtMs) ?? Number.POSITIVE_INFINITY)
-      - (finiteTimestamp(b?.expiresAtMs) ?? Number.POSITIVE_INFINITY)
-      || String(a?.id).localeCompare(String(b?.id))
-    )[0] ?? null;
 }
 
 export class PendingApprovalStore {
@@ -196,11 +204,22 @@ export class PendingApprovalStore {
   }
 
   getPrompt(sessionKey, { actionable = true } = {}) {
+    return this.getPrompts(sessionKey, { actionable })[0] ?? null;
+  }
+
+  getPrompts(sessionKey, { actionable = true } = {}) {
     this.expire();
     const current = this.pendingBySession.get(sessionKey);
-    if (!current) return null;
-    const prompt = choosePrompt([...current.values()]);
-    if (!prompt) return null;
-    return actionable ? prompt : { ...prompt, actionable: false };
+    if (!current) return [];
+    const prompts = [...current.values()]
+      .slice()
+      .sort((a, b) =>
+        (finiteTimestamp(a?.expiresAtMs) ?? Number.POSITIVE_INFINITY)
+        - (finiteTimestamp(b?.expiresAtMs) ?? Number.POSITIVE_INFINITY)
+        || (finiteTimestamp(a?.createdAtMs) ?? Number.POSITIVE_INFINITY)
+        - (finiteTimestamp(b?.createdAtMs) ?? Number.POSITIVE_INFINITY)
+        || String(a?.id).localeCompare(String(b?.id))
+      );
+    return actionable ? prompts : prompts.map((prompt) => ({ ...prompt, actionable: false }));
   }
 }

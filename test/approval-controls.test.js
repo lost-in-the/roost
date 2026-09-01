@@ -39,6 +39,14 @@ test('approve_reject draws exactly deny and allow-once', () => {
   assert.equal(result.buttons.some((button) => button.decision === 'allow-always'), false);
 });
 
+test('approval attribution names the actor and exposes only the queue count', () => {
+  const result = view({ prompt: prompt({
+    actor: { gateway: 'Omar', name: 'Claude' },
+    queue: { position: 1, total: 3 },
+  }) });
+  assert.equal(result.meta, 'Omar · Claude · 3 decisions waiting');
+});
+
 test('handoff draws no buttons and tells the operator to answer elsewhere', () => {
   const result = view({ prompt: prompt({ kind: 'handoff', reversible: false }) });
   assert.equal(result.visible, true);

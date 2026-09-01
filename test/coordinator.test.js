@@ -115,6 +115,24 @@ test('preserves prompt and future fields while qualifying id and runId', () => {
   assert.deepEqual(seen.at(-1)[0].prompt, { ...prompt, id: 'labby:prompt-1' });
 });
 
+test('qualifies every queued prompt without changing actor projection', () => {
+  const labby = new FakeSource();
+  const source = new MultiGatewaySource([{ alias: 'labby', source: labby }]);
+  const seen = [];
+  source.on('agents', (agents) => seen.push(agents));
+  source.start();
+  labby.emit('agents', [{
+    ...agent('a', 'needs_attention'),
+    actorId: 'claude',
+    prompts: [
+      { id: 'p1', kind: 'handoff', reversible: false, label: 'one' },
+      { id: 'p2', kind: 'approve_reject', reversible: true, label: 'two' },
+    ],
+  }]);
+  assert.deepEqual(seen.at(-1)[0].prompts.map((prompt) => prompt.id), ['labby:p1', 'labby:p2']);
+  assert.equal(seen.at(-1)[0].actorId, 'claude');
+});
+
 test('routes approval resolution only to the owning alias', async () => {
   const labby = new FakeSource();
   const omar = new FakeSource();

@@ -3,6 +3,8 @@ import { isStale, silentFor } from '/staleness.js';
 import { routeTopic, countsAsLiveness } from '/topics.js';
 import { mount as mountCounter, flushQueue, resolveVariant } from '/components/laptop-counter.js';
 import { mount as mountApprovals } from '/components/approval-controls.js';
+import { mount as mountRoster } from '/components/agent-roster.js';
+import { formatDuration, timeDisplay } from '/components/time-display.js';
 
 /**
  * The panel.
@@ -29,6 +31,7 @@ const nodes = {
   toast: el('toast'),
   staleSub: el('stale-sub'),
   approvalSlot: el('approval-slot'),
+  roster: el('agent-roster'),
 };
 
 const STATE_WORDS = {
@@ -47,6 +50,7 @@ let last = null;          // last payload rendered
 let lastMessageAt = 0;    // wall clock of the last message of any kind
 const startedAt = Date.now();  // so a panel that never connects still goes stale
 let sinceEpoch = null;    // when the winning agent entered its state
+let roster = null;
 
 // ---------------------------------------------------------------------------
 // rendering
@@ -59,6 +63,7 @@ function render(payload) {
   root.dataset.state = state;
   nodes.state.textContent = STATE_WORDS[state];
   nodes.label.textContent = payload.label ?? '';
+  roster?.render(payload.roster);
 
   const count = Number.isFinite(payload.count) ? payload.count : 0;
   nodes.count.hidden = count < 2;         // "1" adds nothing; 2+ is information
@@ -76,24 +81,17 @@ function render(payload) {
   tickElapsed();
 }
 
-function formatDuration(ms) {
-  const total = Math.max(0, Math.floor(ms / 1000));
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
-  if (m > 0) return `${m}m ${String(s).padStart(2, '0')}s`;
-  return `${s}s`;
-}
-
 function tickElapsed() {
   // A counter that keeps climbing while the feed is dead is the exact lie this
   // project exists to avoid. Freeze it the moment we go stale.
   if (root.dataset.stale === 'yes') return;
-  if (sinceEpoch == null) { nodes.elapsed.textContent = ''; return; }
-  const duration = formatDuration(Date.now() - sinceEpoch);
-  // Stalled reads as "stuck for", so even the text stops sounding like progress.
-  nodes.elapsed.textContent = root.dataset.state === 'stalled' ? `stuck ${duration}` : duration;
+  const expiresAt = last?.prompt?.expires_at ? Date.parse(last.prompt.expires_at) : null;
+  nodes.elapsed.textContent = timeDisplay({
+    state: root.dataset.state,
+    since: sinceEpoch,
+    expiresAt,
+    now: Date.now(),
+  });
 }
 
 function tickClock() {
@@ -181,6 +179,7 @@ async function drainQueue() {
 
 async function connect() {
   config = await (await fetch('/api/config')).json();
+  roster = mountRoster(nodes.roster);
 
   // ?instrument=corner|header overrides the daemon's default, so both spiked
   // layouts can be compared on the real panel without restarting anything.
@@ -232,7 +231,7 @@ async function connect() {
     // a timestamp frozen at connect time would be arbitrarily stale. Treat it
     // explicitly as "offline as of now" rather than defaulting the field.
     if (payload.state === 'offline' && payload.ts === undefined) {
-      render({ ...payload, label: 'state daemon is not running', count: 0, since: null });
+      render({ ...payload, label: 'state daemon is not running', count: 0, since: null, roster: [] });
       approvals?.refresh();
       return;
     }
