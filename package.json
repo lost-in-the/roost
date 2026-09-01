@@ -16,7 +16,7 @@
     "dev:broker": "node scripts/dev-broker.js"
   },
   "dependencies": {
-    "@openclaw/gateway-client": "2026.7.2-beta.7",
+    "@openclaw/gateway-client": "2026.8.2",
     "@openclaw/gateway-protocol": "2026.7.2-beta.7",
     "mqtt": "^5.15.2"
   },
