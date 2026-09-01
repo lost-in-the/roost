@@ -58,15 +58,15 @@ Built so far, in the order §7 required:
   from `expires_at` instead of counting approval age upward. Generic Claude
   tool titles are handoffs rather than blind approvals.
 
-**Deployed 2026-08-31.** The panel is running on-device against separate Labby
-and Omar identities, with the approval route bound to loopback. A live
-Claude-native Labby prompt appeared on the glass and source-local resolution
-was verified. The stale fail-safe was also exercised by stopping and restoring
-the daemon. Omar's ordinary Discord Bash path did not create a Gateway approval
-because that runtime path was not policy-gated. The two-Gateway on-device
-acceptance box remains open until an actual Claude-native gated Omar request is
-exercised; no runtime repair is implied. See [`BACKLOG.md`](BACKLOG.md) for the
-remaining safe-summary limitation.
+**Deployed 2026-08-31; live acceptance repeated 2026-09-01.** The panel is
+running on-device against separate Labby and Omar identities, with the approval
+route bound to loopback. Harmless policy-gated Claude-native Bash requests on
+both Gateways produced pending events, survived reviewer reconnect, appeared on
+the physical output, and were denied source-locally without executing. Both
+presentations were only `Claude native tool: Bash`, so Roost correctly rendered
+handoffs instead of putting Allow beside an action whose purpose was unknown.
+The two-Gateway answer-from-panel box therefore remains open for the bounded
+purpose-summary case, not for Gateway transport. See [`BACKLOG.md`](BACKLOG.md).
 
 **Goal:** answer an agent's approve/reject prompt from the panel, without
 opening a laptop. That is the second half of the project's success metric —
@@ -562,7 +562,7 @@ decisions. They do not block the panel's first complete approval path.
 - [ ] Answering on the laptop makes the panel buttons disappear within 5 seconds
 - [ ] Another surface winning is shown from the canonical terminal record
 - [x] Reconnecting replaces pending state from authoritative replay without resurrection
-- [ ] Blocking the broker for 35 seconds makes the buttons dead, not just stale-looking
+- [x] Blocking the broker for 35 seconds makes the buttons dead, not just stale-looking
 - [x] A prompt past `expires_at` is dead with no new message required
 - [x] A label that cannot be summarised in 64 characters becomes a non-approvable
       handoff instead of an approvable prompt
@@ -600,3 +600,21 @@ MQTT, HTTP, and renderer decision handling: together they exercise the complete
 Roost-controlled path without pretending the fake Gateway or headless browser
 is a real Claude run, physical finger, or Stream Deck. The corresponding boxes
 remain unticked until those exact live observations are recorded.
+
+**Physical broker-loss acceptance, 2026-09-01.** A private loopback broker,
+five-minute actionable prompt, and temporary Chromium profile were placed on
+the real 1024×600 output while production Roost and the shared broker stayed
+online. The private broker was then terminated. The panel became stale after
+34.2 seconds and was inspected after 35.3 seconds: the prompt was not expired,
+the button was disabled, computed `pointer-events` was `none`, the no-signal
+cover was visible, and a bubbled synthetic click produced zero approval HTTP
+requests. Production OpenClaw and the normal panel profile were restored after
+the capture.
+
+The same live pass raised harmless Claude-native requests on Labby and Omar.
+Both projected as generic Bash handoffs and were denied through source-local
+`approval.resolve` after reconnect replay. The terminal result removed the
+pending projection in approximately 163 ms on Labby and 272 ms on Omar. This
+proves real two-Gateway lifecycle and sub-five-second terminal propagation, but
+does not tick the panel-answer or laptop-buttons items because a handoff has no
+buttons to exercise.

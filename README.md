@@ -37,7 +37,7 @@ work.
 | Hyprland output pinning | working, verified on the physical panel |
 | Physical panel | connected and live, 1024×600 on `HDMI-A-1` |
 | OpenClaw integration | live against separate Labby/Omar identities, each paired with `operator.read` + `operator.approvals` |
-| Touch approvals | deployed; Labby path verified on glass, genuinely gated Omar-Claude on-device case still open |
+| Touch approvals | deployed; real Labby/Omar Claude prompts verified on glass as safe handoffs, bounded-purpose answer-on-glass case still open |
 | `stalled` detection | observer health `stuck` maps to `stalled`; unknown health still fails back to the session's active/idle reading |
 | Touch | working — bound to the panel output, see [`config/hypr/roost.lua`](config/hypr/roost.lua) |
 
