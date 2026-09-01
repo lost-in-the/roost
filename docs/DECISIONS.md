@@ -109,6 +109,16 @@ by OpenClaw, because it is a judgement about silence rather than an event.
 > roost exists, and a wrong mapping is worse than an absent one. Settling it
 > needs a run that actually hangs.
 
+> ### ✅ UPDATED 2026-08-28 — observer health supplies the distinction
+>
+> Roost now subscribes to `session.observer` digests. The runtime's enumerated
+> `health: "stuck"` value maps to `stalled`; progressing and grinding health
+> remain `thinking`, and unrecognised health falls back to the session's active
+> or idle reading. This avoids inventing a silence threshold. The mapping is
+> exercised against live-shaped events and the actual stalled appearance has
+> been rendered on the physical panel through the demo harness; observing a
+> naturally stuck production run remains useful evidence, not a code gate.
+
 ---
 
 ## D-002 — `roost/agents/state` does not collide on the shared broker
@@ -577,3 +587,50 @@ or resolve.
 Codex class of the spike is rerun and passes, classify provenance from the
 stable discriminator `pluginId == "openclaw-codex-app-server"` and reopen this
 decision. No contract or schema change is implied either way.
+
+---
+
+## D-017 — Multi-agent display is a roster plus one daemon-owned approval queue
+
+**Decision.** Roost always publishes a compact actor roster and still selects
+one focal state. Sessions are grouped by reviewer-safe actor identity and owning
+Gateway; the roster carries only state and counts. Pending approvals are kept
+source-local but ordered globally in the daemon by earliest expiry, then
+creation time, then source-qualified prompt id. MQTT carries only the selected
+prompt plus the total waiting count. The touch renderer draws one full decision
+at a time and never offers multiple sets of buttons.
+
+Prompt attribution comes from `presentation.agentId`, with the routed session
+actor and configured Gateway alias as fallbacks. The bounded title is the only
+presentation text eligible for retained MQTT. Plugin `description` and `detail`
+stay in memory because Claude-native descriptions are serialized tool input. A
+generic title that names only a tool class is a handoff, not an approvable
+summary. A future upstream purpose-summary field can reopen that one case
+without weakening the retained-data boundary. Actor and title candidates with
+control, line-separator, or bidirectional control characters are rejected;
+identity beside an approval button must not be visually reorderable. A generic
+`Claude native tool:` title also fails closed when `toolName` is missing.
+
+**Why.** A stable roster answers who is active and scales to Hash or concurrent
+pipeline actors without swapping the primary card. One decision surface avoids
+an approval moving underneath a finger. Earliest-expiry ordering preserves the
+decision that will be lost first, and source-qualified ids keep resolution on
+the Gateway that owns it. Publishing descriptions would make commands and paths
+retained broker/browser state; deriving intent from those strings would make
+Roost an unsafe policy engine.
+
+**Omar boundary.** Omar Claude meaningfully uses this path only when its runtime
+policy asks the Gateway to gate an action. Omar-Codex remains deliberately
+approval-free under D-016. A filesystem or service denial with no authority to
+grant is a failure, not a missing approval. Typed-broker signatures are a
+separate privileged-operation surface and are not converted into Gateway
+`session.approval` records by Roost.
+
+**Rejected.** Multiple full approval cards, browser-side queues, raw description
+projection, action inference from commands, and manufacturing prompts for
+operations the runtime cannot authorize.
+
+**What changes if wrong.** Add daemon-owned pagination only if one-at-a-time
+ordering proves operationally inadequate; do not add renderer aggregation. If
+OpenClaw adds an explicitly bounded persistence-safe purpose summary, accept it
+through a new allowlisted projection and retain the 64-character handoff rule.

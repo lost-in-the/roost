@@ -26,9 +26,11 @@ test('projection keeps only safe fields and filters allowed decisions to allow-o
     gatewayKind: 'plugin',
     reversible: true,
     status: 'pending',
+    createdAtMs: null,
     expiresAtMs: 5000,
     allowedDecisions: ['allow-once', 'deny'],
     label: 'Approve tiny change?',
+    actorId: null,
     actionable: true,
   });
 });
@@ -128,11 +130,61 @@ test('a missing or blank label downgrades to a non-actionable handoff instead of
     gatewayKind: 'plugin',
     reversible: true,
     status: 'pending',
+    createdAtMs: null,
     expiresAtMs: 5000,
     allowedDecisions: ['allow-once', 'deny'],
     label: null,
-    actionable: true,
+    actorId: null,
+    actionable: false,
   });
+});
+
+test('Claude native generic titles carry actor identity but are handoff-only', () => {
+  const projected = projectApproval(rawApproval({
+    createdAtMs: 1234,
+    presentation: {
+      kind: 'plugin',
+      allowedDecisions: ['allow-once', 'deny'],
+      title: 'Claude native tool: Bash',
+      description: '{"command":"SECRET path"}',
+      detail: 'SECRET detail',
+      toolName: 'Bash',
+      agentId: 'omar',
+    },
+  }));
+  assert.equal(projected.label, 'Claude native tool: Bash');
+  assert.equal(projected.actorId, 'omar');
+  assert.equal(projected.createdAtMs, 1234);
+  assert.equal(projected.actionable, false);
+  assert.doesNotMatch(JSON.stringify(projected), /SECRET|command|path/);
+});
+
+test('a generic Claude tool title fails closed when toolName is omitted or inconsistent', () => {
+  for (const toolName of [undefined, 'Shell']) {
+    const projected = projectApproval(rawApproval({
+      presentation: {
+        kind: 'plugin',
+        allowedDecisions: ['allow-once', 'deny'],
+        title: 'Claude native tool: Bash',
+        toolName,
+      },
+    }));
+    assert.equal(projected.label, 'Claude native tool: Bash');
+    assert.equal(projected.actionable, false);
+  }
+});
+
+test('an unsafe title cannot spoof the panel and a clean fallback label is accepted', () => {
+  const projected = projectApproval(rawApproval({
+    presentation: {
+      kind: 'plugin',
+      allowedDecisions: ['allow-once', 'deny'],
+      title: 'Allow\u202eDeny',
+      label: 'Approve safe bounded action?',
+    },
+  }));
+  assert.equal(projected.label, 'Approve safe bounded action?');
+  assert.equal(projected.actionable, true);
 });
 
 test('a truncated replay keeps unseen entries non-actionable and never resurrects an omitted authoritative entry', () => {
@@ -147,6 +199,28 @@ test('a truncated replay keeps unseen entries non-actionable and never resurrect
   assert.equal(unseen.actionable, false);
   store.replaceReplay('sess-1', [], { truncated: false });
   assert.equal(store.getPrompt('sess-1'), null);
+});
+
+test('one session exposes its earliest-expiring pending approval, then breaks otherwise-equal entries by id', () => {
+  const store = new PendingApprovalStore({ now: () => 1000 });
+  const late = projectApproval(rawApproval({ id: 'late', expiresAtMs: 5000 }));
+  const earlyZ = projectApproval(rawApproval({ id: 'z-early', expiresAtMs: 3000 }));
+  const earlyA = projectApproval(rawApproval({ id: 'a-early', expiresAtMs: 3000 }));
+  store.replaceReplay('sess-1', [late, earlyZ, earlyA], { truncated: false });
+
+  // This remains source-local ordering. aggregate() later merges every source
+  // projection into the daemon-owned global order.
+  assert.equal(store.getPrompt('sess-1').id, 'a-early');
+});
+
+test('one session exposes every pending approval in deadline order for daemon queueing', () => {
+  const store = new PendingApprovalStore({ now: () => 1000 });
+  store.replaceReplay('sess-1', [
+    projectApproval(rawApproval({ id: 'late', createdAtMs: 1100, expiresAtMs: 5000 })),
+    projectApproval(rawApproval({ id: 'new', createdAtMs: 1300, expiresAtMs: 3000 })),
+    projectApproval(rawApproval({ id: 'old', createdAtMs: 1200, expiresAtMs: 3000 })),
+  ]);
+  assert.deepEqual(store.getPrompts('sess-1').map(({ id }) => id), ['old', 'new', 'late']);
 });
 
 test('expiry kills an entry without a new message', () => {

@@ -9,6 +9,9 @@ function qualifyAgent(alias, agent) {
     id: `${alias}:${agent.id}`,
     runId: agent.runId == null ? null : `${alias}:${agent.runId}`,
     ...(agent.prompt ? { prompt: { ...agent.prompt, id: `${alias}:${agent.prompt.id}` } } : {}),
+    ...(Array.isArray(agent.prompts) ? {
+      prompts: agent.prompts.map((prompt) => ({ ...prompt, id: `${alias}:${prompt.id}` })),
+    } : {}),
   };
 }
 

@@ -46,7 +46,7 @@ html, body {
   height: 100vh; width: 100vw;
   padding: var(--panel-pad);
   display: grid;
-  grid-template-rows: auto 1fr auto auto;
+  grid-template-rows: auto auto 1fr auto auto auto;
   gap: 14px;
   background:
     radial-gradient(120% 90% at 50% 0%, rgb(from var(--accent) r g b / var(--pulse)) 0%, transparent 70%),
@@ -81,6 +81,39 @@ html[data-instrument="corner"] .bar.bottom { padding-right: 130px; }
   background: var(--accent);
 }
 .count[hidden] { display: none; }
+
+/* ---- daemon-ordered actor roster -------------------------------------- */
+
+.agent-roster {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  overflow: hidden;
+}
+.agent-roster[hidden] { display: none; }
+.agent-chip {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 7px 13px;
+  border: 1px solid #27313c;
+  border-radius: 999px;
+  background: rgb(12 16 21 / 0.78);
+  color: var(--ink-dim);
+  font-size: 17px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.agent-chip[data-primary="yes"] { border-color: var(--accent); color: var(--ink); }
+.agent-dot { width: 10px; height: 10px; border-radius: 50%; background: #46586b; flex: none; }
+.agent-chip[data-state="thinking"] .agent-dot { background: #34c3ff; }
+.agent-chip[data-state="listening"] .agent-dot { background: #3ddc97; }
+.agent-chip[data-state="stalled"] .agent-dot { background: #ffa62b; }
+.agent-chip[data-state="needs_attention"] .agent-dot { background: #ff4d8d; }
+.agent-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; }
+.agent-state { font-family: var(--mono); font-size: 14px; opacity: 0.76; }
 
 /* Clock sits in the header, pushed right, ahead of the link dot. */
 .clock {
@@ -188,6 +221,7 @@ html[data-stale="yes"] .glyph::after {
   align-self: start;
   max-width: 78%;
 }
+.approval-controls[hidden] { display: none; }
 
 .approval-line {
   margin: 0;
@@ -195,6 +229,14 @@ html[data-stale="yes"] .glyph::after {
   line-height: 1.25;
   color: var(--ink-dim);
 }
+.approval-line:empty { display: none; }
+.approval-meta {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 20px;
+  color: var(--accent);
+}
+.approval-meta:empty { display: none; }
 
 .approval-buttons {
   display: flex;

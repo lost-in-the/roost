@@ -3,10 +3,15 @@
 **Status:** protocol spike completed 2026-08-27; Claude-native approvals passed
 on both Gateways, and the operator took the scope decision on 2026-08-30 to
 narrow M2 to that supported class. [`DECISIONS.md`](DECISIONS.md)
-D-016 records the boundary. The build sequence now runs through §7 step 5.
-Written 2026-08-21, immediately after M1 shipped, while the reasoning was
-fresh. The 2026-08-23 hardware blocker is resolved. Homelab backlog 128 calls
-this work M3; this repository retains the original Roost milestone name, M2.
+D-016 records the boundary. Deployment is complete and the Labby live approval
+path has passed on glass. The original spike proved the same Claude-native
+class on Omar; the on-device run exercised an ungated Bash path and therefore
+did not create a fresh prompt. That is a live-coverage gap, not evidence that
+Omar-Codex or a filesystem denial should become approval-producing. D-017
+records the split. Written 2026-08-21, immediately after M1 shipped, while the
+reasoning was fresh. The 2026-08-23 hardware blocker is resolved. Homelab
+backlog 128 calls this work M3; this repository retains the original Roost
+milestone name, M2.
 
 Built so far, in the order §7 required:
 
@@ -45,11 +50,23 @@ Built so far, in the order §7 required:
   view state. It also uncovered two route defects fixed with it: expiry was not
   enforced at the HTTP route, and `jsonError()` dropped the canonical terminal
   record from the error path.
+- **The actor roster, global approval queue and expiry countdown** (2026-08-31).
+  D-017. Every projected prompt stays source-local while aggregation selects
+  the earliest deadline, publishes only that safe prompt plus the queue count,
+  and groups sessions into bounded actor/Gateway roster entries. The renderer
+  names the selected actor, keeps one decision surface, and displays time left
+  from `expires_at` instead of counting approval age upward. Generic Claude
+  tool titles are handoffs rather than blind approvals.
 
-Not built yet: deploy (§7 step 6). Integration testing is done offline, but the
-panel has still not been tested live against two gateways and has not been
-deployed; the config flip and pairing/scope change in step 6 still need
-separate operator approval.
+**Deployed 2026-08-31.** The panel is running on-device against separate Labby
+and Omar identities, with the approval route bound to loopback. A live
+Claude-native Labby prompt appeared on the glass and source-local resolution
+was verified. The stale fail-safe was also exercised by stopping and restoring
+the daemon. Omar's ordinary Discord Bash path did not create a Gateway approval
+because that runtime path was not policy-gated. The two-Gateway on-device
+acceptance box remains open until an actual Claude-native gated Omar request is
+exercised; no runtime repair is implied. See [`BACKLOG.md`](BACKLOG.md) for the
+remaining safe-summary limitation.
 
 **Goal:** answer an agent's approve/reject prompt from the panel, without
 opening a laptop. That is the second half of the project's success metric —
@@ -536,9 +553,9 @@ decisions. They do not block the panel's first complete approval path.
 ## 9. Definition of done, when it is built
 
 - [ ] A reversible prompt is approved from the panel and the run continues
-- [ ] Labby and Omar remain visible simultaneously through separate identities
+- [x] Labby and Omar remain visible simultaneously through separate identities
 - [ ] A harmless approval from each Gateway is answered from the panel
-- [ ] Native `/codex bind` approvals remain absent and the Codex classes of the
+- [x] Native `/codex bind` approvals remain absent and the Codex classes of the
       2026-08-27 spike remain documented unsupported, per D-016
 - [ ] A destructive prompt requires a deliberate second confirm
 - [x] Answering the same prompt twice is rejected by the daemon, not the browser
@@ -547,10 +564,8 @@ decisions. They do not block the panel's first complete approval path.
 - [x] Reconnecting replaces pending state from authoritative replay without resurrection
 - [ ] Blocking the broker for 35 seconds makes the buttons dead, not just stale-looking
 - [x] A prompt past `expires_at` is dead with no new message required
-- [ ] A label that cannot be summarised in 64 characters becomes a non-approvable
-      handoff instead of an approvable prompt — *daemon half done: it emits
-      `kind: "handoff"`. The renderer still needs its honest wording decided
-      (see the warning in §2).*
+- [x] A label that cannot be summarised in 64 characters becomes a non-approvable
+      handoff instead of an approvable prompt
 - [ ] The Stream Deck still works, unchanged and unmodified
 - [x] Published MQTT messages, exercised daemon log lines, and renderer view
       state contain no raw approval payloads
@@ -566,6 +581,7 @@ everything the daemon can print.
 aggregation, published MQTT path, approval HTTP route, and renderer decision
 layer against a fake Gateway transport and an in-process broker. It proves that
 published state, exercised daemon log lines, and renderer view state stay free
-of raw approval payload strings offline, but it does not observe a real panel,
-two live Gateways, or on-device touch behavior. The unticked boxes still need
-the live two-Gateway run and the on-device pass in §7 step 6.
+of raw approval payload strings offline. The physical panel has since shown the
+two live Gateway identities and the renderer's long-summary handoff. The
+remaining unticked boxes still require their exact live exercises; stopping the
+daemon is not substituted for the specifically named 35-second broker block.

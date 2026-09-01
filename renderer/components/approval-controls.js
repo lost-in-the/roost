@@ -41,7 +41,26 @@ function normalizePrompt(prompt) {
     kind: prompt.kind,
     reversible: prompt.reversible,
     expiresAtMs,
+    actor: normalizeActor(prompt.actor),
+    queueTotal: Number.isInteger(prompt.queue?.total) && prompt.queue.total > 0
+      ? prompt.queue.total : 1,
   };
+}
+
+function normalizeActor(actor) {
+  if (!actor || typeof actor !== 'object') return null;
+  const gateway = typeof actor.gateway === 'string' ? actor.gateway.trim() : '';
+  const name = typeof actor.name === 'string' ? actor.name.trim() : '';
+  if (!gateway || !name) return null;
+  return { gateway, name };
+}
+
+function actorLine(prompt) {
+  if (!prompt.actor) return prompt.queueTotal > 1 ? `${prompt.queueTotal} decisions waiting` : '';
+  const identity = prompt.actor.gateway.toLocaleLowerCase() === prompt.actor.name.toLocaleLowerCase()
+    ? prompt.actor.name
+    : `${prompt.actor.gateway} · ${prompt.actor.name}`;
+  return prompt.queueTotal > 1 ? `${identity} · ${prompt.queueTotal} decisions waiting` : identity;
 }
 
 function isExpired(prompt, now) {
@@ -119,6 +138,7 @@ export function promptView({ prompt, state, stale, now, phase = {} }) {
       visible: false,
       promptId: null,
       line: '',
+      meta: '',
       message: '',
       disabled: true,
       buttons: [],
@@ -137,6 +157,7 @@ export function promptView({ prompt, state, stale, now, phase = {} }) {
       visible: true,
       promptId: normalized.id,
       line: expired ? 'Decision expired.' : 'A decision is waiting. Answer it elsewhere.',
+      meta: actorLine(normalized),
       message,
       disabled: true,
       buttons: [],
@@ -174,6 +195,7 @@ export function promptView({ prompt, state, stale, now, phase = {} }) {
     visible: true,
     promptId: normalized.id,
     line,
+    meta: actorLine(normalized),
     message,
     disabled: controlsDisabled,
     buttons,
@@ -226,6 +248,10 @@ export function mount(root, { getSnapshot, onToast, now = () => Date.now() } = {
   line.className = 'approval-line';
   wrap.appendChild(line);
 
+  const meta = document.createElement('p');
+  meta.className = 'approval-meta';
+  wrap.insertBefore(meta, line);
+
   const row = document.createElement('div');
   row.className = 'approval-buttons';
   wrap.appendChild(row);
@@ -270,12 +296,14 @@ export function mount(root, { getSnapshot, onToast, now = () => Date.now() } = {
     if (!view.visible) {
       wrap.dataset.disabled = 'yes';
       line.textContent = '';
+      meta.textContent = '';
       schedule();
       return;
     }
 
     wrap.dataset.disabled = view.disabled ? 'yes' : 'no';
     line.textContent = view.message || view.line;
+    meta.textContent = view.meta;
 
     for (const button of buttons.values()) button.hidden = true;
     for (const spec of view.buttons) {

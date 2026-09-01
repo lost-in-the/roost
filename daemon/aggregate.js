@@ -127,6 +127,77 @@ function normalisePrompt(prompt, label, now, warn) {
   };
 }
 
+const MAX_ACTOR_LENGTH = 32;
+
+function safeActorPart(value) {
+  if (typeof value !== 'string') return null;
+  const clean = value.trim();
+  // Identity is a security cue. Reject ASCII/C1 controls, line separators and
+  // bidi-direction controls rather than letting an actor visually rewrite the
+  // order or apparent owner of the text beside an approval button.
+  const unsafe = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
+  if (clean === '' || clean.length > MAX_ACTOR_LENGTH || unsafe.test(clean)) return null;
+  return clean[0].toUpperCase() + clean.slice(1);
+}
+
+function actorFor(agent, prompt = null) {
+  const gateway = safeActorPart(agent?.gateway);
+  const name = safeActorPart(prompt?.actorId) ?? safeActorPart(agent?.actorId) ?? gateway;
+  if (!gateway && !name) return null;
+  return { gateway: gateway ?? name, name: name ?? gateway };
+}
+
+function sourcePrompts(agent) {
+  if (Array.isArray(agent?.prompts)) return agent.prompts;
+  return agent?.prompt ? [agent.prompt] : [];
+}
+
+function promptOrder(a, b) {
+  return (Number.isFinite(a.prompt?.expiresAt) ? a.prompt.expiresAt : Number.POSITIVE_INFINITY)
+    - (Number.isFinite(b.prompt?.expiresAt) ? b.prompt.expiresAt : Number.POSITIVE_INFINITY)
+    || (Number.isFinite(a.prompt?.createdAt) ? a.prompt.createdAt : Number.POSITIVE_INFINITY)
+    - (Number.isFinite(b.prompt?.createdAt) ? b.prompt.createdAt : Number.POSITIVE_INFINITY)
+    || String(a.prompt?.id).localeCompare(String(b.prompt?.id));
+}
+
+function rosterFor(agents, winner, promptCandidates) {
+  const grouped = new Map();
+  const pendingByAgent = new Map();
+  for (const candidate of promptCandidates) {
+    pendingByAgent.set(candidate.agent.id, (pendingByAgent.get(candidate.agent.id) ?? 0) + 1);
+  }
+
+  for (const agent of agents) {
+    const actor = actorFor(agent);
+    if (!actor) continue;
+    const key = `${actor.gateway}\u0000${actor.name}`;
+    const existing = grouped.get(key);
+    const candidate = {
+      gateway: actor.gateway,
+      name: actor.name,
+      state: agent.state,
+      active: agent.state === 'idle' ? 0 : 1,
+      pending: pendingByAgent.get(agent.id) ?? 0,
+      primary: agent.id === winner?.id,
+    };
+    if (!existing) {
+      grouped.set(key, candidate);
+      continue;
+    }
+    existing.active += candidate.active;
+    existing.pending += candidate.pending;
+    existing.primary ||= candidate.primary;
+    if (rankState(candidate.state) > rankState(existing.state)) existing.state = candidate.state;
+  }
+
+  return [...grouped.values()].sort((a, b) =>
+    Number(b.primary) - Number(a.primary)
+    || rankState(b.state) - rankState(a.state)
+    || a.gateway.localeCompare(b.gateway)
+    || a.name.localeCompare(b.name)
+  );
+}
+
 /**
  * @param {Array} agents  Agent records: { id, state, label, runId, urgency, since, prompt }
  * @param {{now?: number, onWarn?: (msg: string) => void}} [opts]
@@ -141,13 +212,31 @@ export function aggregate(agents, opts = {}) {
   const ranked = agents.map((a) => ({ ...a, _rank: rankState(a.state) }));
   const active = ranked.filter((a) => a.state !== 'idle');
 
-  // Deterministic winner: highest state, then longest time in it, then id.
-  // Input order must never change the output.
-  const winner = active.slice().sort((x, y) =>
+  // Deterministic ordinary-state winner: highest state, then longest time in
+  // it, then id. Input order must never change the output.
+  const stateWinner = active.slice().sort((x, y) =>
     y._rank - x._rank ||
     (x.since ?? 0) - (y.since ?? 0) ||
     String(x.id).localeCompare(String(y.id))
   )[0];
+
+  // A source may have several pending approvals in one session. Validate every
+  // candidate before it can contribute to the queue, then order the complete
+  // cross-Gateway queue by the deadline that can be lost first, creation time,
+  // and finally the already-qualified prompt id.
+  const promptCandidates = ranked
+    .filter((agent) => agent.state === 'needs_attention')
+    .flatMap((agent) => sourcePrompts(agent).map((prompt) => {
+      const label = prompt.label ?? agent.label;
+      const normalized = normalisePrompt(prompt, label, now, warn);
+      return normalized ? { agent, prompt, label, normalized } : null;
+    }))
+    .filter(Boolean)
+    .sort(promptOrder);
+
+  const selected = promptCandidates[0] ?? null;
+  const winner = selected?.agent ?? stateWinner;
+  const winnerLabel = selected?.label ?? winner?.label ?? null;
 
   // Urgency is the max across ALL non-idle agents, independent of who won the
   // state race. A quietly-thinking agent that is blocking still raises urgency.
@@ -161,7 +250,7 @@ export function aggregate(agents, opts = {}) {
     ts: isoSeconds(now),
     state: winner ? winner.state : 'idle',
     count: active.length,
-    label: winner ? truncateLabel(winner.label) : null,
+    label: winner ? truncateLabel(winnerLabel) : null,
     urgency,
     primary_run_id: winner ? (winner.runId ?? null) : null,
     // Additive to the v1 contract: when the winning agent entered its current
@@ -180,6 +269,15 @@ export function aggregate(agents, opts = {}) {
     // Judged against the RAW label, not the truncated one above: a truncated
     // label fits by construction, so passing it would make the §2 rule
     // unconditionally true and quietly answerable.
-    prompt: winner ? normalisePrompt(winner.prompt, winner.label, now, warn) : null,
+    prompt: selected ? {
+      ...selected.normalized,
+      actor: actorFor(selected.agent, selected.prompt),
+      summary: truncateLabel(selected.label),
+      queue: { position: 1, total: promptCandidates.length },
+    } : null,
+    // Additive v1 projection. Sessions are grouped into human actors so a
+    // pipeline with several runs does not turn into a wall of session keys.
+    // No per-session labels or ids are published here.
+    roster: rosterFor(ranked, winner, promptCandidates),
   };
 }

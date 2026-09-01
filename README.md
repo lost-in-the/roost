@@ -8,7 +8,7 @@ Every screen is a thin subscriber of that one message. **The contract is the
 asset; renderers are disposable.**
 
 ```
-  StateSource  (mock today, OpenClaw later)
+  StateSource  (mock demo or live OpenClaw Gateways)
        │
        ▼
   roost daemon ─── aggregates across all agents, truncates the label,
@@ -21,9 +21,11 @@ asset; renderers are disposable.**
        └── Home Assistant   (later)
 ```
 
-**Milestone 1.** Panel shows live agent state, driven by a mock source. Touch
-approvals, Home Assistant views, audio, the enclosure and the animated face are
-all out of scope.
+**Current milestone.** M1 presence is complete. The M2 Claude-native touch-
+approval path is deployed on the physical panel; its remaining live acceptance
+cases are tracked in [`docs/M2-touch-approvals.md`](docs/M2-touch-approvals.md#9-definition-of-done-when-it-is-built).
+Home Assistant views, audio, the enclosure and the animated face remain later
+work.
 
 ---
 
@@ -31,14 +33,15 @@ all out of scope.
 
 | | |
 |---|---|
-| State contract, daemon, renderer | working, 267 tests |
+| State contract, daemon, renderer | working; `npm test` is the authoritative suite count |
 | Hyprland output pinning | working, verified on the physical panel |
 | Physical panel | connected and live, 1024×600 on `HDMI-A-1` |
-| OpenClaw integration | Labby presence working; separate Labby/Omar identities paired with `operator.read` + `operator.approvals`; dual-Gateway step-1 coordinator built, deploy default still `labby` only |
-| `stalled` detection | **not mapped yet** — see [`docs/DECISIONS.md`](docs/DECISIONS.md) D-001 |
+| OpenClaw integration | live against separate Labby/Omar identities, each paired with `operator.read` + `operator.approvals` |
+| Touch approvals | deployed; Labby path verified on glass, genuinely gated Omar-Claude on-device case still open |
+| `stalled` detection | observer health `stuck` maps to `stalled`; unknown health still fails back to the session's active/idle reading |
 | Touch | working — bound to the panel output, see [`config/hypr/roost.lua`](config/hypr/roost.lua) |
 
-M1 is complete. The daemon reads real agent presence from the OpenClaw gateway
+M1 is complete. The daemon reads real agent presence from both OpenClaw Gateways
 and the panel tracks live runs, verified during an actual chat: `idle →
 thinking → idle` in step with the conversation turns, event-driven rather than
 polled. `MockStateSource` remains the default and drives the full state loop
@@ -85,6 +88,26 @@ Watch the contract directly:
 node -e "const m=require('mqtt').connect('mqtt://127.0.0.1:1883');
 m.on('connect',()=>m.subscribe('roost/agents/state'));
 m.on('message',(t,p)=>console.log(p.toString()))"
+```
+
+### Capture every panel state
+
+With the deployed panel and daemon running, this captures the real 1024×600
+output through the built-in demo sequence:
+
+```sh
+npm run capture:panel
+```
+
+The command writes eight timestamped PNGs and a manifest under
+`tmp/panel-captures/`. It temporarily restarts only `roost-daemon` with the
+mock source, preserves the unit's existing configuration, and restores the
+original source on success, failure, or interruption. Concurrent captures are
+rejected. To choose a stable artifact directory or a specific output:
+
+```sh
+npm run capture:panel -- --destination /tmp/roost-screens
+npm run capture:panel -- --output DP-1
 ```
 
 ---
@@ -431,7 +454,9 @@ cat    ~/.local/state/roost/laptop-opens.log      # when
   pinning requirement was verified
 - [`schema/CHANGELOG.md`](schema/CHANGELOG.md) — the contract's history
 - [`docs/M2-touch-approvals.md`](docs/M2-touch-approvals.md) — design note for
-  the next milestone. Nothing built; read §6 first, it gates the rest.
+  the touch-approval milestone. Read §6 before changing approval behavior.
+- [`docs/BACKLOG.md`](docs/BACKLOG.md) — observed follow-ups, including the
+  remaining Omar acceptance and upstream safe-summary work.
 - [`docs/desk-agent-presence-plan.md`](docs/desk-agent-presence-plan.md) — why
   this exists at all; start at the TL;DR, then §5, then §3
 - [`docs/slice1-delivery-plan.md`](docs/slice1-delivery-plan.md) — flows and

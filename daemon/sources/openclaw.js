@@ -84,7 +84,10 @@ function approvalPrompt(prompt) {
     id: prompt.id,
     kind: prompt.actionable ? 'approve_reject' : 'handoff',
     reversible: prompt.reversible,
+    createdAt: prompt.createdAtMs,
     expiresAt: prompt.expiresAtMs,
+    label: prompt.label,
+    actorId: prompt.actorId,
   };
 }
 
@@ -292,10 +295,11 @@ export class OpenClawStateSource extends StateSource {
 
     const snapshotNow = Date.now();
     const agents = mapSessionsToAgents(sessions, this.digests, this.previous, snapshotNow).map((agent) => {
-      const prompt = this.approvals.getPrompt(agent.id, {
+      const prompts = this.approvals.getPrompts(agent.id, {
         actionable: this.connectionState === 'connected',
       });
-      if (!prompt) return agent;
+      if (prompts.length === 0) return agent;
+      const prompt = prompts[0];
       return {
         ...agent,
         label: prompt.label,
@@ -303,6 +307,7 @@ export class OpenClawStateSource extends StateSource {
         urgency: 'blocking',
         since: sinceForFinalState(this.previous, agent.id, 'needs_attention', snapshotNow),
         prompt: approvalPrompt(prompt),
+        prompts: prompts.map(approvalPrompt),
       };
     });
     this.previous = new Map(agents.map((a) => [a.id, { state: a.state, since: a.since }]));

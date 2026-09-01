@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mapSessionsToAgents } from '../daemon/openclaw/map-sessions.js';
+import { mapSessionsToAgents, sessionActorId } from '../daemon/openclaw/map-sessions.js';
 import { aggregate, STATE_PRIORITY } from '../daemon/aggregate.js';
 
 const session = (over = {}) => ({
@@ -27,6 +27,12 @@ test('archived sessions are dropped, because an archived conversation is not a c
 test('the id is the session key, because it must stay stable across emissions', () => {
   const [agent] = mapSessionsToAgents([session({ key: 'stable-key' })]);
   assert.equal(agent.id, 'stable-key');
+});
+
+test('actor identity comes from the explicit field or routed prefix, never the session remainder', () => {
+  assert.equal(sessionActorId(session({ agentId: 'omar', key: 'secret-session' })), 'omar');
+  assert.equal(sessionActorId(session({ agentId: null, key: 'agent:labby:secret-session' })), 'labby');
+  assert.equal(sessionActorId(session({ agentId: null, key: 'ios-secret-session' })), null);
 });
 
 test('a working agent is labelled with its session name, so the panel says what is happening', () => {
