@@ -1,0 +1,18 @@
+{
+  "id": "roost-acceptance",
+  "name": "Roost Approval Acceptance",
+  "description": "Two bounded no-secret probes for live Roost approval acceptance.",
+  "contracts": {
+    "tools": [
+      "roost_reversible_probe",
+      "roost_irreversible_probe"
+    ]
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}

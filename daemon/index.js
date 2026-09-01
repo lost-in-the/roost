@@ -32,7 +32,15 @@ function buildSource(config) {
       const deviceFile = resolveDeviceFile(alias);
       const url = resolveGatewayUrl(alias);
       log(`openclaw gateway=${alias} device=${deviceFile} url=${url}`);
-      return { alias, source: createOpenClawSource({ alias, deviceFile, url }) };
+      return {
+        alias,
+        source: createOpenClawSource({
+          alias,
+          deviceFile,
+          url,
+          reversibleApprovalTools: config.reversibleApprovalTools,
+        }),
+      };
     });
     const source = new MultiGatewaySource(children);
     source.on('warning', (m) => log(`WARNING ${m}`));

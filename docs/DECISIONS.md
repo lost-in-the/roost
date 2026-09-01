@@ -634,3 +634,39 @@ operations the runtime cannot authorize.
 ordering proves operationally inadequate; do not add renderer aggregation. If
 OpenClaw adds an explicitly bounded persistence-safe purpose summary, accept it
 through a new allowlisted projection and retain the 64-character handoff rule.
+
+---
+
+## D-018 — One-tap plugin approvals require an exact operator allowlist
+
+**Decision.** While OpenClaw has no authoritative reversible field for plugin
+approvals, Roost may classify a plugin tool as reversible only when its exact
+`pluginId/toolName` pair appears in `ROOST_OPENCLAW_REVERSIBLE_TOOLS`. The
+configuration is parsed once by the daemon and passed to every Gateway source.
+Unknown or malformed pairs fail closed. The renderer still consumes only the
+daemon-owned boolean and never sees the allowlist.
+
+An explicitly boolean reversibility field already present in a future or
+source-native reviewed projection remains usable by the existing projector.
+The local allowlist fills the current schema gap; it does not let presentation
+copy override an explicit `false` from a future protocol contract.
+
+**Why.** Reversibility is policy, not prose. Inferring it from a title,
+description, severity, command or arguments would let wording turn a two-tap
+operation into one tap and would require sensitive payloads to cross the
+retained MQTT/browser boundary. Exact tool ownership is stable, auditable and
+keeps all unknown tools on the safer second-confirm path.
+
+The repository includes `test/fixtures/openclaw-roost-acceptance/`, a bounded
+temporary plugin with one side-effect-free probe and one process-local counter.
+Its static approval titles never include parameters. It exists to reproduce
+live and offline acceptance and must be removed from Gateways after a drill.
+
+**Rejected.** Title or severity heuristics, renderer-side classification,
+wildcards, automatically trusting every tool from a plugin, and publishing raw
+arguments so a person or browser can decide reversibility.
+
+**What changes if wrong.** If OpenClaw adds a reviewed authoritative boolean,
+prefer it and retire individual local entries after a migration test. Removing
+the allowlist only makes existing entries require two taps, so rollback fails
+safe.
