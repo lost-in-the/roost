@@ -112,6 +112,21 @@ authority, expiry/replay behaviour, and a decision about what (if any) request
 metadata can be shown on glass.  Do not put 1Password credentials or raw
 request payloads in the renderer or MQTT contract.
 
+## Deferred — Stream Deck compatibility observation
+
+M2 does not add, migrate, or modify a Stream Deck integration. The device is a
+legacy compact status surface alongside Roost, not an approval surface, and the
+MQTT contract was deliberately kept additive so an existing subscriber can
+continue unchanged.
+
+The USB device is attached on the panel host, but no local process or service
+currently owns its HID interface. Hardware presence alone cannot satisfy the
+acceptance item. If the old integration is located or restored, observe one
+ordinary agent-state transition and record whether it still updates without a
+configuration change. If that integration has been retired, revise the
+acceptance item explicitly; do not build a new Stream Deck integration solely
+to manufacture backwards-compatibility evidence.
+
 ## Low priority — determine why compositor captures retain a pointer
 
 Exact-output `grim` captures of the 1024×600 panel include a pointer near the

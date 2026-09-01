@@ -58,6 +58,7 @@ function makeToolsDir(home) {
 }
 
 function writeOpStub(bin, marker, {
+  interruptOnCreate = false,
   interruptOnTemp = false,
   interruptOnRename = false,
   interruptSignal = 'TERM',
@@ -124,6 +125,25 @@ function writeOpStub(bin, marker, {
     '',
   ].join('\n'));
   fs.chmodSync(stub, 0o755);
+
+  if (interruptOnCreate) {
+    const mktemp = path.join(bin, 'mktemp');
+    fs.writeFileSync(mktemp, [
+      '#!/usr/bin/env bash',
+      'created=$("$ROOST_REAL_MKTEMP" "$@") || exit $?',
+      'printf "%s\\n" "$created"',
+      'count=0',
+      'if [ -e "$ROOST_MKTEMP_COUNT" ]; then read -r count < "$ROOST_MKTEMP_COUNT"; fi',
+      'count=$((count + 1))',
+      'printf "%s\\n" "$count" > "$ROOST_MKTEMP_COUNT"',
+      'if [ "$count" -eq "$ROOST_MKTEMP_INTERRUPT_CALL" ]; then',
+      '  printf touched > "$ROOST_MKTEMP_MARKER"',
+      `  kill -${interruptSignal} 0`,
+      'fi',
+      '',
+    ].join('\n'));
+    fs.chmodSync(mktemp, 0o755);
+  }
 
   if (interruptOnTemp) {
     const chmod = path.join(bin, 'chmod');
@@ -221,6 +241,8 @@ function runProvision({
   panelValue = 'panel-secret-value',
   existing = SENTINEL,
   existingMode = 0o600,
+  interruptOnCreate = false,
+  interruptCreateCall = 1,
   interruptOnTemp = false,
   interruptOnRename = false,
   interruptSignal = 'TERM',
@@ -235,11 +257,14 @@ function runProvision({
   const marker = path.join(home, 'op.marker');
   const bytesDir = path.join(home, 'op-bytes');
   const chmodMarker = path.join(home, 'chmod.marker');
+  const mktempMarker = path.join(home, 'mktemp.marker');
+  const mktempCount = path.join(home, 'mktemp.count');
   const rmMarker = path.join(home, 'rm.marker');
   const rmLog = path.join(home, 'rm.log');
   const grepLog = path.join(home, 'grep.log');
   fs.mkdirSync(bytesDir, { recursive: true });
   writeOpStub(bin, marker, {
+    interruptOnCreate,
     interruptOnTemp,
     interruptOnRename,
     interruptSignal,
@@ -251,8 +276,9 @@ function runProvision({
   const beforeHash = sha256(cache);
   const beforeMode = mode(cache);
   const beforeBytes = fs.existsSync(cache) ? fs.readFileSync(cache) : null;
-  const command = cleanupInterruptTarget === 'process-group' ? '/usr/bin/setsid' : 'bash';
-  const args = cleanupInterruptTarget === 'process-group' ? ['-w', 'bash', SCRIPT] : [SCRIPT];
+  const useProcessGroup = interruptOnCreate || cleanupInterruptTarget === 'process-group';
+  const command = useProcessGroup ? '/usr/bin/setsid' : 'bash';
+  const args = useProcessGroup ? ['-w', 'bash', SCRIPT] : [SCRIPT];
   const result = spawnSync(command, args, {
     encoding: 'utf8',
     env: {
@@ -261,12 +287,16 @@ function runProvision({
       ROOST_OP_MARKER: marker,
       ROOST_OP_BYTES_DIR: bytesDir,
       ROOST_CHMOD_MARKER: chmodMarker,
+      ROOST_MKTEMP_MARKER: mktempMarker,
+      ROOST_MKTEMP_COUNT: mktempCount,
+      ROOST_MKTEMP_INTERRUPT_CALL: String(interruptCreateCall),
       ROOST_RM_MARKER: rmMarker,
       ROOST_RM_LOG: rmLog,
       ROOST_OP_SCENARIO: scenario,
       ROOST_DAEMON_VALUE: daemonValue,
       ROOST_PANEL_VALUE: panelValue,
       ROOST_REAL_CHMOD: '/usr/bin/chmod',
+      ROOST_REAL_MKTEMP: '/usr/bin/mktemp',
       ROOST_REAL_MV: path.join(tools, 'mv'),
       ROOST_REAL_RM: path.join(tools, 'rm'),
       ROOST_REAL_GREP: path.join(tools, 'grep'),
@@ -282,6 +312,8 @@ function runProvision({
     marker,
     bytesDir,
     chmodMarker,
+    mktempMarker,
+    mktempCount,
     rmMarker,
     rmLog,
     grepLog,
@@ -610,6 +642,31 @@ test('a successful run repairs an existing over-permissive cache', () => {
     assert.equal(fs.readFileSync(run.marker, 'utf8'), 'touched');
     assertNoSecretOutput(run);
   });
+});
+
+for (const [interruptCreateCall, stage] of [[1, 'daemon read'], [2, 'panel read'], [3, 'cache']]) {
+  for (const interruptSignal of ['HUP', 'INT', 'TERM']) {
+    test(`a process-group ${interruptSignal} after ${stage} temp creation leaves no unnamed temp`, () => {
+      withProvision({ interruptOnCreate: true, interruptCreateCall, interruptSignal }, (run) => {
+        assert.equal(run.signal, `SIG${interruptSignal}`);
+        assert.equal(run.status, null);
+        assert.equal(run.afterHash, run.beforeHash);
+        assert.equal(run.afterMode, run.beforeMode);
+        assert.equal(fs.readFileSync(run.mktempMarker, 'utf8'), 'touched');
+        assert.equal(fs.readFileSync(run.mktempCount, 'utf8').trim(), String(interruptCreateCall));
+        assert.deepEqual(run.temps, []);
+        assertNoSecretOutput(run);
+      });
+    });
+  }
+}
+
+test('signal handler keeps unrelated termination signals ignored until the original is re-raised', () => {
+  const source = fs.readFileSync(SCRIPT, 'utf8');
+  const handler = source.match(/on_signal\(\) \{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(handler);
+  assert.match(handler, /trap '' HUP INT TERM\n  cleanup\n  trap - EXIT\n[\s\S]*?trap - "\$signal"\n  kill -s "\$signal" "\$\$"/);
+  assert.doesNotMatch(handler, /trap - EXIT HUP INT TERM/);
 });
 
 test('an interruption after the temp file exists still cleans up and preserves the cache', () => {
