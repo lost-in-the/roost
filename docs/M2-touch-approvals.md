@@ -557,7 +557,7 @@ decisions. They do not block the panel's first complete approval path.
 - [x] A harmless approval from each Gateway is answered from the panel
 - [x] Native `/codex bind` approvals remain absent and the Codex classes of the
       2026-08-27 spike remain documented unsupported, per D-016
-- [ ] A destructive prompt requires a deliberate second confirm
+- [x] A destructive prompt requires a deliberate second confirm
 - [x] Answering the same prompt twice is rejected by the daemon, not the browser
 - [ ] Answering on the laptop makes the panel buttons disappear within 5 seconds
 - [ ] Another surface winning is shown from the canonical terminal record
@@ -583,9 +583,9 @@ aggregation, published MQTT path, approval HTTP route, and renderer decision
 layer against a fake Gateway transport and an in-process broker. It proves that
 published state, exercised daemon log lines, and renderer view state stay free
 of raw approval payload strings offline. The physical panel has since shown the
-two live Gateway identities and the renderer's long-summary handoff. The
-remaining unticked boxes still require their exact live exercises; stopping the
-daemon is not substituted for the specifically named 35-second broker block.
+two live Gateway identities and the renderer's long-summary handoff. External-
+surface items stay unticked until their exact live exercises; the physical
+broker-loss item has its own exact observation below.
 
 `npm run accept:m2` is the longer, isolated browser acceptance pass. It launches
 the real renderer in system Chromium, serves it through the real HTTP route,
@@ -599,8 +599,9 @@ read deployment config or credentials and never touches the shared broker.
 That command and `test/approval-integration.test.js` deliberately overlap at
 MQTT, HTTP, and renderer decision handling: together they exercise the complete
 Roost-controlled path without pretending the fake Gateway or headless browser
-is a real Claude run, physical finger, or Stream Deck. The corresponding boxes
-remain unticked until those exact live observations are recorded.
+is a real Claude run, physical finger, or Stream Deck. Those isolated runs do
+not by themselves tick a named external-surface or hardware observation; the
+later entries below record which physical cases have actually closed.
 
 **Physical broker-loss acceptance, 2026-09-01.** A private loopback broker,
 five-minute actionable prompt, and temporary Chromium profile were placed on
@@ -640,7 +641,32 @@ The same fixture exposed an OpenClaw boundary outside Roost: later direct
 `plugin.approval.request` calls were not consistently broadcast to an already
 connected session observer, and one Labby Claude CLI plugin call reported
 `Plugin approval unavailable (no approval route)` after its pending projection
-was visible for only a few seconds. The remaining destructive-on-glass,
-laptop-button and canonical-winner items stay unticked until their named live
-observations can be made; the offline browser acceptance still pins all three
-Roost-controlled behaviors.
+was visible for only a few seconds. This remains an upstream acceptance item;
+it does not weaken the bounded plugin path or the physical Roost checks below.
+
+**Repeatable physical approval acceptance, 2026-09-01.**
+`npm run accept:m2:physical` placed a temporary app-mode Chromium profile on
+the real 1024×600 output while using a private loopback broker, topic and HTTP
+server. It did not restart the production daemon, read deployment configuration
+or credentials, or contact either Gateway. Playwright supplied separate clicks
+while `grim` captured the exact output; a human finger was not required.
+
+The full run recorded all four cases in `evidence.json`:
+
+- the first irreversible Allow click produced zero HTTP requests, displayed
+  `Confirm allow once`, and the second click produced exactly one request;
+- a terminal publish from the runner's isolated publisher removed the physical
+  panel's controls in 5 ms, below the five-second limit;
+- the isolated resolver supplied an HTTP 409 canonical conflict response, and
+  the panel displayed `Already answered: denied.`; and
+- broker silence made the controls disabled with `pointer-events: none`, showed
+  the no-signal cover, and produced zero synthetic-click requests.
+
+The runner restored `roost-panel.service`; the production kiosk was then
+verified at 1024×600 with fullscreen state 2. This ticks the destructive-
+confirm item and adds physical renderer evidence for the two external-surface
+paths. Those two items remain unticked until a real laptop answer and a real
+competing-surface terminal record are observed. The Stream Deck line stays
+unticked because the operator explicitly deferred it, and the OpenClaw routing
+and generic Claude-native purpose-summary gaps stay in `docs/BACKLOG.md` rather
+than being hidden behind Roost fallbacks.

@@ -110,6 +110,35 @@ npm run capture:panel -- --destination /tmp/roost-screens
 npm run capture:panel -- --output DP-1
 ```
 
+### Run physical approval acceptance
+
+The M2 acceptance runner uses a private loopback broker, HTTP server, topic and
+temporary Chromium profile while rendering on the real 1024×600 output:
+
+```sh
+npm run accept:m2:physical
+```
+
+It verifies the irreversible second confirm, sub-five-second removal after a
+simulated outside terminal publish, rendering of a simulated canonical conflict
+response, and dead controls after broker silence. Exact-output PNGs plus
+machine-readable `evidence.json` are written under `tmp/physical-acceptance/`.
+Playwright supplies the distinct clicks, so the run requires no person at the
+screen; it tests the physical display path, not the capacitive touch sensor.
+
+Only `roost-panel.service` is stopped temporarily. The production daemon,
+shared broker, OpenClaw Gateways, deployment configuration and credentials are
+untouched. Concurrent runs are rejected with a per-user runtime lock, and the
+runner attempts kiosk restoration on success, failure, or a handled signal. A
+normal run cannot report success unless the unit is active afterward. Use
+`--skip-stale` for a short debugging pass, or select an output or artifact
+directory explicitly:
+
+```sh
+npm run accept:m2:physical -- --skip-stale
+npm run accept:m2:physical -- --output HDMI-A-1 --destination /tmp/roost-m2-physical
+```
+
 ---
 
 ## Install
