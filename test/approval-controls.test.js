@@ -174,6 +174,8 @@ test('the pure control logic never queues anything for later', () => {
 test('outcomeMessage is stable for plain failure cases', () => {
   assert.equal(outcomeMessage({ ok: false, code: 'bad_request' }), 'Approval failed.');
   assert.equal(outcomeMessage({ ok: false, code: 'transport_uncertain' }), 'Result unknown. Check on a laptop.');
+  assert.equal(outcomeMessage({ ok: false, code: 'already_answered', status: 'denied' }), 'Already answered: denied.');
+  assert.equal(outcomeMessage({ ok: false, code: 'already_answered', status: 'allowed' }), 'Already answered: allowed once.');
 });
 
 test('canSubmit refuses stale, offline, disabled, unknown, and unavailable decisions', () => {
@@ -250,6 +252,15 @@ test('readDecisionResponse accepts only panel-supported applied decisions', () =
       { ok: false, decision: null, code },
     );
   }
+
+  assert.deepEqual(
+    readDecisionResponse({
+      ok: false,
+      status: 409,
+      body: { ok: false, code: 'already_answered', status: 'denied', decision: 'deny' },
+    }),
+    { ok: false, decision: 'deny', status: 'denied', code: 'already_answered' },
+  );
 
   assert.deepEqual(
     readDecisionResponse({ ok: false, status: 501, body: null }),

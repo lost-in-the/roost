@@ -402,7 +402,10 @@ test('approval integration: answering the same prompt twice is rejected by the d
           status: 'allowed',
           decision: 'allow-once',
         });
-        assert.equal(outcomeMessage(readDecisionResponse({ ok: false, status: second.status, body: secondJson })), 'Already answered.');
+        assert.equal(
+          outcomeMessage(readDecisionResponse({ ok: false, status: second.status, body: secondJson })),
+          'Already answered: allowed once.',
+        );
       } finally {
         resolveGateway?.();
         if (!firstFulfilled) await first.catch(() => {});

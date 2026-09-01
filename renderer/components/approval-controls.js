@@ -23,6 +23,13 @@ const TERMINAL_STATUS_FOR = new Map([
   ['allow-once', 'allowed'],
 ]);
 
+const TERMINAL_OUTCOME_TEXT = new Map([
+  ['allowed', 'allowed once'],
+  ['denied', 'denied'],
+  ['expired', 'expired'],
+  ['cancelled', 'cancelled'],
+]);
+
 function normalizePrompt(prompt) {
   if (!prompt || typeof prompt !== 'object') return null;
   if (typeof prompt.id !== 'string' || prompt.id.length === 0) return null;
@@ -114,7 +121,13 @@ export function reducePhase(previous = {}, event, now = Date.now()) {
     case 'submit-result':
       next.inFlightPromptId = null;
       next.disabledPromptId = event.promptId;
-      next.outcome = { promptId: event.promptId, ok: event.ok, code: event.code, decision: event.decision };
+      next.outcome = {
+        promptId: event.promptId,
+        ok: event.ok,
+        code: event.code,
+        decision: event.decision,
+        status: event.status ?? null,
+      };
       return next;
 
     default:
@@ -125,7 +138,10 @@ export function reducePhase(previous = {}, event, now = Date.now()) {
 export function outcomeMessage(outcome) {
   if (!outcome) return '';
   if (outcome.ok) return `Applied: ${APPLIED_TEXT[outcome.decision] || outcome.decision}.`;
-  if (outcome.code === 'already_answered') return 'Already answered.';
+  if (outcome.code === 'already_answered') {
+    const terminal = TERMINAL_OUTCOME_TEXT.get(outcome.status);
+    return terminal ? `Already answered: ${terminal}.` : 'Already answered.';
+  }
   if (NON_ANSWERABLE_CODES.has(outcome.code)) return 'This decision is no longer answerable here.';
   if (outcome.code === 'transport_uncertain') return 'Result unknown. Check on a laptop.';
   return 'Approval failed.';
@@ -221,7 +237,13 @@ export function readDecisionResponse({ ok, status, body }) {
   }
 
   if (typeof body?.code === 'string' && body.code.length > 0) {
-    return { ok: false, decision: null, code: body.code };
+    const result = {
+      ok: false,
+      decision: typeof body?.decision === 'string' ? body.decision : null,
+      code: body.code,
+    };
+    if (typeof body?.status === 'string') result.status = body.status;
+    return result;
   }
 
   return { ok: false, decision: null, code: `http_${status}` };
@@ -346,6 +368,7 @@ export function mount(root, { getSnapshot, onToast, now = () => Date.now() } = {
       ok: result.ok,
       code: result.code || null,
       decision: result.decision || chosen.decision,
+      status: result.status || null,
     }, now());
     paint();
     if (phase.outcome) onToast?.(outcomeMessage(phase.outcome));

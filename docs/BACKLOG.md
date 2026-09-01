@@ -22,6 +22,14 @@ do not tick
 Claude-native Omar request produces a pending projection and is resolved
 source-locally.
 
+**Rechecked 2026-09-01.** Omar has configured Claude models and Roost's paired
+device still holds `operator.approvals`, but Omar's effective exec policy is
+`ask=off`. Changing it to `ask=on-miss` is an external OpenClaw policy change,
+not a Roost code change, and was not done by the acceptance spike. It would not
+by itself complete this item: a generic `Claude native tool: Bash` presentation
+still correctly becomes a handoff until OpenClaw supplies the bounded purpose
+summary described below.
+
 **Boundaries.** Select an actual policy-gated Omar Claude operation; do not
 consume legacy raw approval events, borrow another Gateway's device identity,
 or treat a filesystem refusal as an approval.
